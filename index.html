@@ -28,7 +28,24 @@
     </header>
     <div class="wrap layout">
       <article>
+        <section id="overview">
+          <figure class="video-example overview-video">
+            <video controls playsinline preload="metadata" poster="assets/paper-overview.jpg" aria-label="From Prompt to Floor paper overview video">
+              <source src="assets/paper-overview.mp4" type="video/mp4">
+              <a href="assets/paper-overview.mp4">Download the paper overview video</a>
+            </video>
+          </figure>
+        </section>
+        <section id="abstract" class="narrow-section">
+          <h2>Abstract</h2>
+          <p class="abstract">Simulation is a standard tool for testing industrial layouts and training perception models, yet building realistic remanufacturing workcells remains manual. We present an agentic pipeline in which an LLM agent writes a declarative workcell specification, compiles it into an OpenUSD scene in NVIDIA Isaac Sim, and repairs it until it passes static, physical and safety checks. Across 30 prompts and 3 LLMs, no model produces a valid scene zero-shot; with up to 10 repairs, acceptance reaches 67–90%, with layout diversity and plausibility comparable to a non-LLM procedural generator. We then check the accepted scenes rather than treating them as ground truth: they separate shared-floor navigation policies by collision and freezing behaviour, reveal that synthetic workers move more uniformly than real motion-capture data, and yield sim-to-real person-detection gains that depend on the detector.</p>
+          <div class="stats" aria-label="Study highlights">
+            <div><strong>67–90%</strong><span>scene acceptance after up to ten repairs</span></div>
+            <div><strong>13,949</strong><span>real images in the detection evaluation</span></div>
+          </div>
+        </section>
         <section id="videos">
+          <p class="label">Video examples</p>
           <div class="video-grid">
             <figure class="video-example">
               <video controls playsinline preload="metadata" poster="assets/demo-p01-deepseek.jpg" aria-label="Demonstration in the P01 EV battery dismantling scene" aria-describedby="p01-video-caption">
@@ -51,14 +68,6 @@
               </video>
               <figcaption id="p23-video-caption"><strong>Sorting and grading</strong><span>GLM-5.3 Flash · P23<br>16 × 10 m · three workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/glm-5.3-flash_cloud/runs/20261030T040557_ce8ff817">Source dataset run ↗</a></figcaption>
             </figure>
-          </div>
-        </section>
-        <section id="abstract" class="narrow-section">
-          <h2>Abstract</h2>
-          <p class="abstract">Simulation is a standard tool for testing industrial layouts and training perception models, yet building realistic remanufacturing workcells remains manual. We present an agentic pipeline in which an LLM agent writes a declarative workcell specification, compiles it into an OpenUSD scene in NVIDIA Isaac Sim, and repairs it until it passes static, physical and safety checks. Across 30 prompts and 3 LLMs, no model produces a valid scene zero-shot; with up to 10 repairs, acceptance reaches 67–90%, with layout diversity and plausibility comparable to a non-LLM procedural generator. We then check the accepted scenes rather than treating them as ground truth: they separate shared-floor navigation policies by collision and freezing behaviour, reveal that synthetic workers move more uniformly than real motion-capture data, and yield sim-to-real person-detection gains that depend on the detector.</p>
-          <div class="stats" aria-label="Study highlights">
-            <div><strong>67–90%</strong><span>scene acceptance after up to ten repairs</span></div>
-            <div><strong>13,949</strong><span>real images in the detection evaluation</span></div>
           </div>
         </section>
         <section id="method">

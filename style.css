@@ -26,7 +26,8 @@ h1 { margin: 0; font-size: clamp(2.4rem, 6vw, 3.6rem); letter-spacing: -.035em; 
 .button:hover { text-decoration: none; background: #343c49; }
 article { min-width: 0; }
 section { scroll-margin-top: 1.5rem; padding-block: 2.5rem; }
-#videos { padding-top: .5rem; }
+#overview { padding-top: .5rem; }
+.overview-video { max-width: 960px; margin: 0 auto; }
 .label { margin: 0 0 .4rem; color: var(--accent); font-size: .78rem; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; text-align: center; }
 h2 { margin: 0 0 1.1rem; font-size: 1.75rem; line-height: 1.25; letter-spacing: -.02em; text-align: center; }
 section > p:not(.label) { max-width: 780px; margin-inline: auto; }
