@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="From Prompt to Floor: verified LLM-generated workcells for human-robot remanufacturing. Explore results on scene generation, navigation, motion realism, and sim-to-real detection.">
+  <title>From Prompt to Floor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <main id="main">
+    <header class="hero" id="top">
+      <div class="wrap">
+          <h1>From Prompt to Floor</h1>
+          <p class="subtitle">Verified LLM-Generated Workcells for Human-Robot Remanufacturing</p>
+          <nav class="hero-actions" aria-label="Project resources">
+            <a class="button" href="https://github.com/raduu-m/From-Prompt-to-Floor-Verified-LLM-Generated-Workcells-for-Human-Robot-Remanufacturing">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-13-2 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Code
+            </a>
+            <a class="button" href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+              Dataset
+            </a>
+          </nav>
+      </div>
+    </header>
+    <div class="wrap layout">
+      <article>
+        <section id="videos">
+          <p class="label">Video examples</p>
+          <h2>Collision-aware scene demonstrations</h2>
+          <div class="video-grid">
+            <figure class="video-example">
+              <video controls playsinline preload="metadata" poster="assets/demo-p01-deepseek.jpg" aria-label="Collision-aware demonstration in the P01 EV battery dismantling scene" aria-describedby="p01-video-caption">
+                <source src="assets/demo-p01-deepseek.mp4" type="video/mp4">
+                <a href="assets/demo-p01-deepseek.mp4">Download the battery dismantling demonstration</a>
+              </video>
+              <figcaption id="p01-video-caption"><strong>Electric vehicle battery dismantling</strong><span>DeepSeek V4.1 Flash · P01<br>8 × 6 m · one worker</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/deepseek-v4.1-flash_cloud/runs/20261029T134119_7e18efd9">Source dataset run ↗</a></figcaption>
+            </figure>
+            <figure class="video-example">
+              <video controls playsinline preload="metadata" poster="assets/demo-p15-sonnet.jpg" aria-label="Collision-aware demonstration in the P15 gearbox remanufacturing scene" aria-describedby="p15-video-caption">
+                <source src="assets/demo-p15-sonnet.mp4" type="video/mp4">
+                <a href="assets/demo-p15-sonnet.mp4">Download the gearbox remanufacturing demonstration</a>
+              </video>
+              <figcaption id="p15-video-caption"><strong>Gearbox remanufacturing</strong><span>Claude Sonnet 5.5 · P15<br>26 × 14 m · six workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/claude-sonnet-5-5/runs/20261030T095745_91fdb0bb">Source dataset run ↗</a></figcaption>
+            </figure>
+            <figure class="video-example">
+              <video controls playsinline preload="metadata" poster="assets/demo-p23-glm.jpg" aria-label="Collision-aware demonstration in the P23 sorting and grading scene" aria-describedby="p23-video-caption">
+                <source src="assets/demo-p23-glm.mp4" type="video/mp4">
+                <a href="assets/demo-p23-glm.mp4">Download the sorting and grading demonstration</a>
+              </video>
+              <figcaption id="p23-video-caption"><strong>Sorting and grading</strong><span>GLM-5.3 Flash · P23<br>16 × 10 m · three workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/glm-5.3-flash_cloud/runs/20261030T040557_ce8ff817">Source dataset run ↗</a></figcaption>
+            </figure>
+          </div>
+        </section>
+        <section id="abstract" class="narrow-section">
+          <h2>Abstract</h2>
+          <p class="abstract">Simulation is a standard tool for testing industrial layouts and training perception models, yet building realistic remanufacturing workcells remains manual. We present an agentic pipeline in which an LLM agent writes a declarative workcell specification, compiles it into an OpenUSD scene in NVIDIA Isaac Sim, and repairs it until it passes static, physical and safety checks. Across 30 prompts and 3 LLMs, no model produces a valid scene zero-shot; with up to 10 repairs, acceptance reaches 67–90%, with layout diversity and plausibility comparable to a non-LLM procedural generator. We then check the accepted scenes rather than treating them as ground truth: they separate shared-floor navigation policies by collision and freezing behaviour, reveal that synthetic workers move more uniformly than real motion-capture data, and yield sim-to-real person-detection gains that depend on the detector.</p>
+          <div class="stats" aria-label="Study highlights">
+            <div><strong>67–90%</strong><span>scene acceptance after up to ten repairs</span></div>
+            <div><strong>13,949</strong><span>real images in the detection evaluation</span></div>
+          </div>
+        </section>
+        <section id="method">
+          <p class="label">Method</p>
+          <h2>Generating workcells from natural language</h2>
+          <p class="lead">Scene construction begins with a structured description of the room, its equipment, worker routes, and robot goals. The agent can specify spatial relations as well as explicit positions. A layout solver resolves those relations, and a compiler produces the OpenUSD scene for NVIDIA Isaac Sim. When a check fails, the agent receives a diagnostic that it can use to revise the specification. Acceptance requires the completed scene to satisfy the static and safety checks and pass the final physics check.</p>
+          <figure class="chart">
+            <img src="assets/pipeline.png" alt="A workcell prompt enters the LLM repair loop. The verified cell is replayed with a blind policy that makes contact and a protective-fields policy that leaves a 0.44 metre gap.">
+            <figcaption>The generation process connects a workcell description to automated verification and revision. A navigation replay illustrates how an accepted scene can support subsequent evaluation.</figcaption>
+          </figure>
+          <p>The acceptance criteria include a minimum aisle width of 1.2 m and 0.5 m of clear floor around fenced robot cells. Workbench fronts, storage areas, and exits must be accessible on foot from a door. Worker routes must also maintain at least 0.3 m clearance from the parked robot.</p>
+        </section>
+        <section id="generation">
+          <p class="label">01 / Scene generation</p>
+          <h2>Acceptance and computational effort</h2>
+          <p>Each model was evaluated on 30 prompts covering six remanufacturing categories. DeepSeek produced the largest number of accepted scenes, with 27 of 30 passing the checks. Sonnet accepted 24 scenes with a lower median token cost and reached acceptance within three repairs on 15 prompts. GLM accepted 20 scenes. These results reveal a tradeoff between final acceptance and the computational effort required to obtain it.</p>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Scene generation results">
+            <table>
+              <caption>Table 1. Acceptance and effort across 30 prompts per model</caption>
+              <thead><tr><th scope="col">Model</th><th scope="col">Accepted</th><th scope="col">Turns</th><th scope="col">Repairs</th><th scope="col">Output tokens</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Claude Sonnet 5.5</th><td>24/30</td><td>20</td><td>3</td><td>19.2k</td></tr>
+                <tr><th scope="row">DeepSeek V4.1 Flash</th><td>27/30</td><td>47</td><td>4</td><td>66.0k</td></tr>
+                <tr><th scope="row">GLM-5.3 Flash</th><td>20/30</td><td>38</td><td>6</td><td>52.2k</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">The effort measures summarize all 30 runs for each model. Turns, repairs, and output tokens are reported as medians.</p>
+          <figure class="chart narrow">
+            <img src="assets/acceptance.png" alt="Acceptance rises from zero at zero repairs to 90% for DeepSeek, 80% for Sonnet, and 67% for GLM at ten repairs." loading="lazy">
+            <figcaption>The proportion of accepted runs increases with the available repair budget. Shading indicates 95% Wilson confidence intervals.</figcaption>
+          </figure>
+        </section>
+        <section id="diversity">
+          <p class="label">02 / Layout diversity</p>
+          <h2>Layout diversity and spatial quality</h2>
+          <p>Repeated generation can produce different arrangements without necessarily improving their usefulness. The comparison therefore measures occupancy intersection over union (IoU), adherence to the requested spatial relations, and functional plausibility. Across five prompts and five seeds per method, the LLMs and procedural recipe produced similar levels of layout variation and plausibility. The recipe achieved higher spatial adherence, although it received structured prompt fields. Overlapping diversity intervals do not support a ranking of the LLMs and recipe on that measure.</p>
+          <figure class="chart">
+            <img src="assets/occupancy.png" alt="Occupancy overlays for Sonnet, DeepSeek, GLM, a recipe, and a template. The template repeats sharp placements while the LLM and recipe overlays show more variation." loading="lazy">
+            <figcaption>Occupancy overlays for five samples of one prompt. Concentrated regions indicate repeated placements, while diffuse regions indicate greater variation across layouts.</figcaption>
+          </figure>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Layout diversity results">
+            <table>
+              <caption>Table 2. Accepted layouts, mean ± standard deviation where reported</caption>
+              <thead><tr><th scope="col">Method</th><th scope="col">Occupancy IoU ↓</th><th scope="col">Spatial adherence ↑</th><th scope="col">Plausibility ↑</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Sonnet 5.5</th><td>0.27 ± 0.10</td><td>0.85 ± 0.05</td><td>0.87 ± 0.06</td></tr>
+                <tr><th scope="row">DeepSeek V4.1</th><td>0.20 ± 0.08</td><td>0.80 ± 0.05</td><td>0.89 ± 0.05</td></tr>
+                <tr><th scope="row">GLM 5.3</th><td>0.20 ± 0.06</td><td>0.86 ± 0.03</td><td>0.85 ± 0.06</td></tr>
+                <tr><th scope="row">Recipe</th><td>0.25 ± 0.16</td><td>0.95 ± 0.04</td><td>0.89 ± 0.05</td></tr>
+                <tr><th scope="row">Template</th><td>1.00</td><td>0.88</td><td>1.00</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">IoU is computed between scene pairs generated for the same prompt on a 0.1 m grid. Lower values indicate less overlap. Spatial adherence measures whether the requested relations hold, while plausibility averages four functional checks. The comparison includes accepted scenes only.</p>
+        </section>
+        <section id="safety">
+          <p class="label">03 / Human–robot safety</p>
+          <h2>Navigation in shared workspaces</h2>
+          <p>Crowding exposed different weaknesses in the navigation policies. In the hard condition, Fields reduced collisions involving a moving robot from 1.59 to 0.15 per trial relative to Blind. Contacts with the stationary robot increased from 0.16 to 1.06. Human-aware avoided moving collisions in these trials, but froze in 55% of the hard-condition runs. The comparison therefore depends on both contact behavior and the ability to complete the route.</p>
+          <p>The experiment combines ten accepted scenes with 30 seeds for each scene, difficulty tier, and policy. Blind follows its route without responding to workers. Fields uses warning and protective zones to slow or stop the robot, and Human-aware stops when a person is within 0.5 m. The easy, medium, and hard tiers contain one, three, and six workers, respectively. Up to four occluding shelves are added in the hard tier.</p>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Navigation results across all three tiers">
+            <table>
+              <caption>Table 3. Shared-floor navigation results</caption>
+              <thead><tr><th scope="col">Tier</th><th scope="col">Policy</th><th scope="col">Success</th><th scope="col">Frozen</th><th scope="col">Time (s)</th><th scope="col">Moving</th><th scope="col">Stationary</th></tr></thead>
+              <tbody>
+                <tr><td>Easy</td><th scope="row">Blind</th><td>81%</td><td>0%</td><td>42</td><td>0.25</td><td>0.03</td></tr>
+                <tr><td>Easy</td><th scope="row">Fields</th><td>99%</td><td>0%</td><td>45</td><td>0.01</td><td>0.06</td></tr>
+                <tr><td>Easy</td><th scope="row">Human-aware</th><td>95%</td><td>5%</td><td>61</td><td>0.00</td><td>0.09</td></tr>
+              </tbody>
+              <tbody>
+                <tr><td>Medium</td><th scope="row">Blind</th><td>53%</td><td>0%</td><td>42</td><td>0.80</td><td>0.09</td></tr>
+                <tr><td>Medium</td><th scope="row">Fields</th><td>95%</td><td>0%</td><td>56</td><td>0.05</td><td>0.35</td></tr>
+                <tr><td>Medium</td><th scope="row">Human-aware</th><td>72%</td><td>24%</td><td>92</td><td>0.00</td><td>0.30</td></tr>
+              </tbody>
+              <tbody>
+                <tr><td>Hard</td><th scope="row">Blind</th><td>40%</td><td>0%</td><td>42</td><td>1.59</td><td>0.16</td></tr>
+                <tr><td>Hard</td><th scope="row">Fields</th><td>85%</td><td>1%</td><td>72</td><td>0.15</td><td>1.06</td></tr>
+                <tr><td>Hard</td><th scope="row">Human-aware</th><td>40%</td><td>55%</td><td>126</td><td>0.00</td><td>0.37</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Collision rates distinguish contacts made while the robot is moving from those made while it is stationary. Success requires reaching every goal without a moving collision, so a successful trial may still contain stationary contact. Reported travel times are medians over completed trials. The workers follow scripted behavior, which limits the interpretation of these rates beyond the simulated conditions.</p>
+        </section>
+        <section id="motion">
+          <p class="label">04 / Motion realism</p>
+          <h2>Variation in pedestrian motion</h2>
+          <p>Matching average walking speed does not capture the changes in pace observed in real pedestrians. A comparison of 307 generated paths from 93 scenes with 52 THÖR-MAGNI motion-capture recordings illustrates this difference. The fastest synthetic group matched the reference mean of 0.89 m/s. Within 8 s windows, however, the median normalized standard deviation of speed was 0.08–0.11 for synthetic workers and 0.29 for the reference. The generated motion therefore underrepresents the variation in pace that can affect when people reach a shared crossing.</p>
+          <figure class="chart">
+            <img src="assets/motion.png" alt="Cumulative distributions for normalized speed standard deviation and 95th-percentile absolute curvature. The synthetic groups show lower speed variability than THÖR-MAGNI." loading="lazy">
+            <figcaption>Distributions of speed variability and trajectory curvature, calculated over 8 s windows, compare the generated worker paths with the motion-capture reference.</figcaption>
+          </figure>
+        </section>
+        <section id="detection">
+          <p class="label">05 / Sim-to-real detection</p>
+          <h2>Transfer to real person detection</h2>
+          <p>The detection experiment holds the synthetic image budget fixed while varying its source. In-distribution (ID) training uses a Sheffield replica, and out-of-distribution (OOD) training uses 12 generated layouts. Each condition contains 1,800 frames, with the mixed condition drawing 900 from each source. Fine-tuning runs for three epochs with three paired seeds. Performance is measured on 13,949 real Sheffield frames excluded from training and checkpoint selection.</p>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Person detection results">
+            <table>
+              <caption>Table 4. Person average precision (AP) on real Sheffield frames at IoU 0.50–0.95. Scores are percentages.</caption>
+              <thead><tr><th scope="col">Model</th><th scope="col">Pretrained</th><th scope="col">ID</th><th scope="col">OOD</th><th scope="col">Mixed</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">YOLO26s</th><td>74.60</td><td>79.04 ± 0.21</td><td>76.96 ± 0.77</td><td><strong>79.29 ± 1.78</strong></td></tr>
+                <tr><th scope="row">YOLO26l</th><td>77.03</td><td>76.22 ± 1.58</td><td><strong>78.47 ± 2.74</strong></td><td>78.22 ± 0.67</td></tr>
+                <tr><th scope="row">RT-DETRv2-S</th><td>53.41</td><td><strong>76.57 ± 1.86</strong></td><td>56.37 ± 2.87</td><td>68.53 ± 1.98</td></tr>
+                <tr><th scope="row">RT-DETRv2-L</th><td>82.03</td><td>82.49 ± 2.92</td><td>80.24 ± 5.93</td><td><strong>83.19 ± 3.39</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Fine-tuning scores are reported as the mean ± standard deviation across three seeds, with the highest observed mean in each row shown in bold. ID training improved RT-DETRv2-S by 23.16 percentage points relative to its pretrained baseline. This gain may reflect adaptation to Sheffield. Evaluation on a single real benchmark, short fine-tuning, and the absence of a real-data fine-tuning reference limit broader conclusions about transfer.</p>
+        </section>
+        <section id="resources">
+          <p class="label">Resources</p>
+          <h2>Code &amp; dataset</h2>
+          <div class="resource-grid">
+            <div class="resource">
+              <h3>Scene generation dataset</h3>
+              <p>The dataset contains E1 generation records, scene specifications, OpenUSD environments, verification reports, rendered views, and agent traces.</p>
+              <a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset">View on Hugging Face ↗</a>
+            </div>
+            <div class="resource">
+              <h3>Source code</h3>
+              <p>Code for scene construction and verification will be shared through the project repository.</p>
+              <a href="https://github.com/raduu-m/From-Prompt-to-Floor-Verified-LLM-Generated-Workcells-for-Human-Robot-Remanufacturing">View on GitHub ↗</a>
+            </div>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <footer>
+    <div class="wrap footer-inner">
+      <div><strong>From Prompt to Floor</strong></div>
+      <a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset">Dataset on Hugging Face ↗</a>
+    </div>
+  </footer>
+</body>
+</html>

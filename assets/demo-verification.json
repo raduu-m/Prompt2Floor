@@ -1,0 +1,84 @@
+[
+  {
+    "slug": "p01-deepseek",
+    "source_model": "deepseek-v4.1-flash_cloud",
+    "source_run": "20261029T134119_7e18efd9",
+    "verification": {
+      "minimum_actor_surface_gap_m": 0.1902664274506834,
+      "minimum_video_surface_gap_m": 0.1902664272763624,
+      "minimum_static_surface_gap_m": 0.06000002329342902,
+      "distance_traveled_m": [
+        13.573422759443828,
+        12.056616295355074
+      ],
+      "actor_overlap_events": 0,
+      "orca_revision": "75822bba14462c2e872ca96423825017ecd24764",
+      "control_dt_s": 0.05,
+      "static_sample_hz": 200,
+      "backend": "ORCA holonomic crowd simulation; Isaac Sim visual rendering",
+      "purpose": "New website demonstration; separate from the paper experiment results"
+    },
+    "video_sha256": "1a7b0c8e5c363749f7db74dc4f1fa4175935619dd4907b1841a2b604e3ae3084",
+    "human_radius_m": 0.45,
+    "robot_radius_m": 0.68,
+    "render_engine": "NVIDIA Isaac Sim 4.5",
+    "duration_s": 22.083333333333332
+  },
+  {
+    "slug": "p15-sonnet",
+    "source_model": "claude-sonnet-5-5",
+    "source_run": "20261030T095745_91fdb0bb",
+    "verification": {
+      "minimum_actor_surface_gap_m": 0.11999989754062418,
+      "minimum_video_surface_gap_m": 0.11968903676409698,
+      "minimum_static_surface_gap_m": 0.06000015108306633,
+      "distance_traveled_m": [
+        18.68745943729437,
+        19.566001113430808,
+        19.888099898874238,
+        17.10665382582137,
+        18.04533994529573,
+        19.82033441248244,
+        13.833503183307117
+      ],
+      "actor_overlap_events": 0,
+      "orca_revision": "75822bba14462c2e872ca96423825017ecd24764",
+      "control_dt_s": 0.05,
+      "static_sample_hz": 200,
+      "backend": "ORCA holonomic crowd simulation; Isaac Sim visual rendering",
+      "purpose": "New website demonstration; separate from the paper experiment results"
+    },
+    "video_sha256": "5e00004298c75bacb47c67965aae9bed52a90e49fd3ebd125b64eb16887a1d0d",
+    "human_radius_m": 0.45,
+    "robot_radius_m": 0.68,
+    "render_engine": "NVIDIA Isaac Sim 4.5",
+    "duration_s": 22.083333333333332
+  },
+  {
+    "slug": "p23-glm",
+    "source_model": "glm-5.3-flash_cloud",
+    "source_run": "20261030T040557_ce8ff817",
+    "verification": {
+      "minimum_actor_surface_gap_m": 1.3885807181904501,
+      "minimum_video_surface_gap_m": 1.3902849047506238,
+      "minimum_static_surface_gap_m": 0.16948330067626938,
+      "distance_traveled_m": [
+        17.90880815134574,
+        19.41351458642981,
+        18.9507796870677,
+        14.269740478486597
+      ],
+      "actor_overlap_events": 0,
+      "orca_revision": "75822bba14462c2e872ca96423825017ecd24764",
+      "control_dt_s": 0.05,
+      "static_sample_hz": 200,
+      "backend": "ORCA holonomic crowd simulation; Isaac Sim visual rendering",
+      "purpose": "New website demonstration; separate from the paper experiment results"
+    },
+    "video_sha256": "a514b043dc34879a625bdbe54dfef2b09a0720c008081f9b8b94231e536ab8f8",
+    "human_radius_m": 0.45,
+    "robot_radius_m": 0.68,
+    "render_engine": "NVIDIA Isaac Sim 4.5",
+    "duration_s": 22.083333333333332
+  }
+]
