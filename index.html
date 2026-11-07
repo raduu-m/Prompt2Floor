@@ -28,33 +28,6 @@
     </header>
     <div class="wrap layout">
       <article>
-        <section id="videos">
-          <p class="label">Video examples</p>
-          <h2>Collision-aware scene demonstrations</h2>
-          <div class="video-grid">
-            <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p01-deepseek.jpg" aria-label="Collision-aware demonstration in the P01 EV battery dismantling scene" aria-describedby="p01-video-caption">
-                <source src="assets/demo-p01-deepseek.mp4" type="video/mp4">
-                <a href="assets/demo-p01-deepseek.mp4">Download the battery dismantling demonstration</a>
-              </video>
-              <figcaption id="p01-video-caption"><strong>Electric vehicle battery dismantling</strong><span>DeepSeek V4.1 Flash · P01<br>8 × 6 m · one worker</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/deepseek-v4.1-flash_cloud/runs/20261029T134119_7e18efd9">Source dataset run ↗</a></figcaption>
-            </figure>
-            <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p15-sonnet.jpg" aria-label="Collision-aware demonstration in the P15 gearbox remanufacturing scene" aria-describedby="p15-video-caption">
-                <source src="assets/demo-p15-sonnet.mp4" type="video/mp4">
-                <a href="assets/demo-p15-sonnet.mp4">Download the gearbox remanufacturing demonstration</a>
-              </video>
-              <figcaption id="p15-video-caption"><strong>Gearbox remanufacturing</strong><span>Claude Sonnet 5.5 · P15<br>26 × 14 m · six workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/claude-sonnet-5-5/runs/20261030T095745_91fdb0bb">Source dataset run ↗</a></figcaption>
-            </figure>
-            <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p23-glm.jpg" aria-label="Collision-aware demonstration in the P23 sorting and grading scene" aria-describedby="p23-video-caption">
-                <source src="assets/demo-p23-glm.mp4" type="video/mp4">
-                <a href="assets/demo-p23-glm.mp4">Download the sorting and grading demonstration</a>
-              </video>
-              <figcaption id="p23-video-caption"><strong>Sorting and grading</strong><span>GLM-5.3 Flash · P23<br>16 × 10 m · three workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/glm-5.3-flash_cloud/runs/20261030T040557_ce8ff817">Source dataset run ↗</a></figcaption>
-            </figure>
-          </div>
-        </section>
         <section id="abstract" class="narrow-section">
           <h2>Abstract</h2>
           <p class="abstract">Simulation is a standard tool for testing industrial layouts and training perception models, yet building realistic remanufacturing workcells remains manual. We present an agentic pipeline in which an LLM agent writes a declarative workcell specification, compiles it into an OpenUSD scene in NVIDIA Isaac Sim, and repairs it until it passes static, physical and safety checks. Across 30 prompts and 3 LLMs, no model produces a valid scene zero-shot; with up to 10 repairs, acceptance reaches 67–90%, with layout diversity and plausibility comparable to a non-LLM procedural generator. We then check the accepted scenes rather than treating them as ground truth: they separate shared-floor navigation policies by collision and freezing behaviour, reveal that synthetic workers move more uniformly than real motion-capture data, and yield sim-to-real person-detection gains that depend on the detector.</p>
