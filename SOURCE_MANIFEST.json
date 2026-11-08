@@ -1,0 +1,33 @@
+{
+  "dependencies": {
+    "worldc": {
+      "repository": "https://github.com/SheepSeb/worldc",
+      "revision": "d0ae72495ef5bbb0b82065f25f3c21dff86c3130"
+    }
+  },
+  "files": {
+    ".gitattributes": "01591b54b34dd43b55eb886fb60d4a0872df1ccea8a5a5df139e11a74ae71aab",
+    ".gitignore": "373e4c4d23fff7febac238b335836efe0f9505b8dbe13bbd85ef8dc2699cb081",
+    "experiments/01_scene_generation/README.md": "67dfa7732f543c48f5ce9c5d1f4cda3ba51a2628addfe050fff7c49ac98e08fb",
+    "experiments/01_scene_generation/run_generation.py": "90a3a50d17ac5740a84a010b847b0ff2e3a38b43d93c1d36652becee03fea98e",
+    "experiments/02_navigation_motion/motion_analysis.py": "d151c6c9880029941ad51f4183bdb0756ce9f52cf2fccdc73d0030f2bc34302a",
+    "experiments/02_navigation_motion/README.md": "09cc9e440ecd5ad450f57d12b43f7cb2c990a878cfed2c9d99f05964188f1571",
+    "experiments/02_navigation_motion/run_navigation.py": "d9c83e09bf543315fcf6005edd114a706e53a35e7a718e35c7c34384d882216f",
+    "experiments/03_person_detection/backends.py": "9e88abb1eaad07d8eef6e389531c295cfe57ddf99344d49b823580d2e74abad0",
+    "experiments/03_person_detection/benchmark.example.json": "ea39e37159cf12eb6fba54af582c536e6dfc2987751e05ca0eb8ef2324f2080b",
+    "experiments/03_person_detection/benchmark.py": "d5312e9dd1e27a9fcb0d6fdc9f0545c2d2c26875f37eb24bfda78e0baddbc1c3",
+    "experiments/03_person_detection/data.py": "d551abdd2794ae64b0ba0103d6d02fe142b6e4ed53dd73e4aeefceb76d9192f5",
+    "experiments/03_person_detection/infer.py": "a44e676f711019b0e65a3e7e7d29808728a480c5c6efcbf5416e2c15ce3b5312",
+    "experiments/03_person_detection/prepare.py": "6caa35b04a026c56878bd36210ef0d227e8c1d0bd641bcc523dcfa7471009788",
+    "experiments/03_person_detection/README.md": "dd5ed29873802252dab702181eaf45c78f4c783fcdde9c6fd07cae13a2e20f3a",
+    "experiments/03_person_detection/requirements.txt": "6377a9532b09e6a8c077f7f2c8ee6d998f6134538cfec736f181b02358d14d16",
+    "experiments/03_person_detection/train.py": "cbbf8b8946bab793f5bf5800e3a8706b9b4f9994896803a13949616456168d55",
+    "integration/worldc.json": "f791d7e446835c9a04ca9a1ff293445494b18c68f3a3c1fe5036861c3e5c6389",
+    "integration/worldc.patch": "46ed9220d2998604f4805fb4403b0458794575c108c27bdfab6834276100f0c2",
+    "pyproject.toml": "a3a825ea5ad73e39fc126849868df7680b7cdc07c2c48313cee0ca752fb0a2b5",
+    "README.md": "cf6727cd568b820f98d0e886c4c140c93c545d1fe967b5649ee250ff475713c5",
+    "requirements.txt": "d1679434dca3ccf7273e5b446e46ded6316a2e10a77ae9093d2c535f511ce9f5",
+    "tests/test_experiment_workflows.py": "0db82caed76a437fa738726229cb29982a1a802217da43ff05cff816befe6397",
+    "VALIDATION.json": "2ec99f6545ab15938db73c2bb77a863b91b94afc166089ad2f1054ac4a9f23c8"
+  }
+}

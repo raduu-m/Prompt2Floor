@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/SheepSeb/worldc",
+  "revision": "d0ae72495ef5bbb0b82065f25f3c21dff86c3130",
+  "patch": "integration/worldc.patch"
+}

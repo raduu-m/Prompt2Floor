@@ -1,0 +1,2376 @@
+diff --git a/docs/E3.md b/docs/E3.md
+index 1992090..bc01b81 100644
+--- a/docs/E3.md
++++ b/docs/E3.md
+@@ -6,7 +6,16 @@ uv run python scripts/e3_one_scene.py SCENE_DIR --name P18 --seeds 10      # one
+ 
+ Code: `src/worldc/e3/` (outside the E1 freeze). `world.py` turns a built scene into 2D grids and task points, `walkers.py`
+ draws the seeded workers, `sim.py` runs the robot under a policy and measures, and `tiers.py` builds the tier variants.
+-No Isaac Sim is needed. Isaac replay of a subset is not built yet.
++No Isaac Sim is needed for this reference backend. The separate measured-physics experiment is documented in
++[E3_ISAAC.md](E3_ISAAC.md); its versioned engine results must not be pooled with these ideal 2D results.
++
++E3 rebuilding needs the mesh dependencies: `uv sync --extra mesh`. CoACD must be available when importing assets
++whose curated collision geometry uses multiple convex hulls. A cache produced without CoACD can contain a single-hull
++fallback with different support geometry; installing CoACD does not update that cache automatically. E3 rejects such
++degraded cached imports. Reimport assets with the mesh extra into a fresh `XDG_CACHE_HOME`, or restore a verified cache
++from the generating environment. Do not disable floating or overlap checks to compensate. Variant metadata records
++the available asset-import decomposition, hull count, and source hash.
++On Windows, use Python 3.12 with the pinned `usd-core==24.11`; that version has no Windows Python 3.13 wheel.
+ 
+ ## Scenes and tiers
+ 
+@@ -88,8 +97,9 @@ Gaps are measured from the robot's footprint rectangle to a person's disk; a gap
+ 
+ **Moving vs stationary.** The robot is *moving* when |v| > 0.05 m/s or |ω| > 0.2 rad/s, so turning in place counts as
+ moving. Walkers do not react, so collisions are split:
+-- **Primary:** `collisions_robot_moving` (the robot's doing).
+-- Also reported: `collisions` (all) and `collisions_robot_stationary` (a person walked into the robot).
++- **Primary:** `collisions_robot_moving` (robot moving at contact onset).
++- Also reported: `collisions` (all) and `collisions_robot_stationary` (robot stationary at contact onset).
++- This split describes motion at contact onset, not causal responsibility. `success` can include stationary contacts.
+ - `collisions_robot_moving_from_behind`: robot-moving collisions where the person's centre was behind the robot's centre
+   along the travel heading. Each collision event carries `ahead_x`, `from_behind`, `robot_holding` (the policy
+   was holding, i.e. braking or stopped) and `state`. `collisions_robot_moving_braking` counts the robot-moving ones
+@@ -131,6 +141,46 @@ uv run python scripts/e3_analysis.py out/e3/*/trials.csv --out results/e3_analys
+   - `scatter.svg` and `scatter_points.csv`: moving collisions against median time to goal, one point per policy x
+     tier, with CIs.
+ 
++The paper table also reports route completion (all required goals reached), no-contact success (`success` and zero
++contacts of either kind), and median penalized time (the task timeout replaces unfinished trials). These are derived
++from existing trial rows; they do not change the frozen policies or simulator outcomes. The original completion-time
++column includes only route finishes, including those with contacts. With one scene, bootstrap intervals describe seed
++variation in that scene only. A zero-width interval after zero observed collisions is not evidence of zero population risk.
++
++## Running the selected scene set
++
++First run `e3_select_scenes.py` below and review its `selection.json`. Relative scene paths in that file are resolved
++against the project root. The selected prompt IDs and source scenes are fixed inputs to the suite, not replaced after
++observing simulation results. P18 was used for policy development; identify it as development data when reporting the
++remaining scenes as validation data. E3's worker/geometry tiers are separate from the source prompt's difficulty label.
++
++```
++uv run python scripts/e3_suite.py results/e3_scene_selection/selection.json --seeds 10 --out out/e3_suite_v1
++```
++
++Ten scenes x three tiers x ten paired seeds x three policies gives 900 planned trials. The runner reuses
++`e3_one_scene.py`, writes a log per scene, and verifies every expected (tier, seed, policy) row, worker count, variant,
++collision split, success definition, and frozen-policy provenance. Each scene must pass a replay rebuilt in a fresh
++world; `replay.json` records both trajectory/event digests. `suite.json` retains the selection, planned and verified trial
++counts, commands, and failed scenes. The runner continues to record scene failures, but runs `e3_analysis.py` only when
++the complete selection is verified and uses the same policy/code versions. Failed scenes are never silently omitted.
++
++Use a new, empty output directory for each run. Animations are omitted by default; add `--gif` for diagnostic GIFs.
++Missing or modified frozen policy provenance fails preflight before simulations. An invalid base variant stops that
++scene before hard variants are attempted; its static-check errors remain in the scene log and variant metadata.
++To pilot fewer scenes, create a separate reviewed selection with its own `n` and `chosen` list. The runner does not
++overwrite an earlier experiment or alter its selection. Existing E1 records and prototype results remain unchanged.
++
++Focused orchestration and reporting checks (no Isaac Sim needed):
++
++```
++uv run python tests/test_e3_suite.py
++uv run python tests/test_e3_reporting.py
++```
++
++The suite tests use controlled child-process results to check complete runs, missing/duplicate trials, replay failures,
++and failed-scene reporting. They do not substitute for an actual scene simulation or Isaac replay.
++
+ ## Scene selection (`scripts/e3_select_scenes.py`)
+ 
+ ```
+@@ -138,7 +188,8 @@ uv run python scripts/e3_select_scenes.py dataset/e1/<model> --n 10 --out result
+ ```
+ 
+ - **Candidates:** accepted E1 runs with physics ok, usable for E3 (a door, at least two kinds of task point, at least
+-  two reachable robot goals).
++  two reachable robot goals, and a base layout that passes E3's 1.2 m aisle pre-check for every task point). This last
++  check runs before shelf additions: an already-ineligible baseline cannot become eligible by adding obstacles.
+ - **Pick:** greedy, one scene per prompt. It covers every cell-type family (engine and motor gearbox reman count as one,
+   which gives 6) and every size, then new (family, size) combinations, then balances families, difficulty and size.
+ - **Safe during E1:** it only reads records and loads 2D grids. The trial grid itself should not run on the E1 machine
+diff --git a/scripts/e3_analysis.py b/scripts/e3_analysis.py
+index be7c84f..f8cb0ca 100644
+--- a/scripts/e3_analysis.py
++++ b/scripts/e3_analysis.py
+@@ -59,6 +59,9 @@ def _ttg(r):
+ 
+ METRICS = {  # name -> (per-trial value, aggregate over the trials of a cell)
+     "success": (lambda r: float(r["success"]), np.nanmean),
++    "route_complete": (lambda r: float(r["end"] == "done" and r["goals_reached"] == r["n_goals"]), np.nanmean),
++    "collision_free_success": (lambda r: float(r["success"] and r["collisions"] == 0), np.nanmean),
++    "penalized_time": (lambda r: _ttg(r) if _ttg(r) is not None else r["timeout_s"], np.nanmedian),
+     "moving_collisions": (lambda r: r["collisions_robot_moving"], np.nanmean),
+     "moving_collisions_from_behind": (lambda r: r["collisions_robot_moving_from_behind"], np.nanmean),
+     "moving_collisions_braking": (lambda r: r["collisions_robot_moving_braking"], np.nanmean),
+@@ -184,12 +187,15 @@ COLUMNS = [  # (header, metric, digits, pct)
+     ("of which already braking", "moving_collisions_braking", 2, False),
+     ("All coll./trial", "all_collisions", 1, False),
+     ("Success (%)", "success", 0, True),
++    ("Route complete (%)", "route_complete", 0, True),
++    ("No-contact success (%)", "collision_free_success", 0, True),
+     ("Frozen (%)", "frozen", 0, True),
+     ("Min gap moving (m)", "min_gap_moving", 2, False),
+     ("<0.5 m moving (s)", "within_0.5m_moving", 1, False),
+     ("<1 m moving (s)", "within_1m_moving", 1, False),
+     ("Stationary <1 m (s)", "stationary_near_1m", 1, False),
+     ("Time to goal (s)", "time_to_goal", 0, False),
++    ("Penalized time (s)", "penalized_time", 0, False),
+ ]
+ 
+ 
+@@ -205,7 +211,10 @@ def table2(est, n_scenes, n_seeds) -> tuple[str, str]:
+         tex.append(r"\midrule" if t != TIERS[-1] else r"\bottomrule")
+     tex.append(r"\end{tabular}")
+     note = (f"\n\n{n_scenes} scene(s) x {n_seeds} seeds per tier and policy. Point estimate with a 95 % cluster-bootstrap CI "
+-            "(scenes, then seeds). Means except min gap and time to goal (medians); time to goal over finished trials only.")
++            "(scenes, then seeds). Means except min gap and both time metrics (medians). "
++            "Success excludes robot-moving contacts; no-contact success excludes all contacts. "
++            "Time to goal includes route finishes with contacts; penalized time substitutes the task timeout for unfinished trials. "
++            "Moving/stationary describes motion at contact onset, not causal responsibility.")
+     return "\n".join(md) + note + "\n", "\n".join(tex) + "\n"
+ 
+ 
+diff --git a/scripts/e3_one_scene.py b/scripts/e3_one_scene.py
+index f847cff..012b9b6 100644
+--- a/scripts/e3_one_scene.py
++++ b/scripts/e3_one_scene.py
+@@ -157,6 +157,8 @@ def main():
+     ap.add_argument("--out", default=None)
+     ap.add_argument("--no-gif", action="store_true")
+     a = ap.parse_args()
++    if a.seeds < 1:
++        ap.error("--seeds must be positive")
+     out = Path(a.out or f"out/e3/{a.name}")
+     out.mkdir(parents=True, exist_ok=True)
+     t0 = time.time()
+@@ -215,9 +217,15 @@ def main():
+     (out / "summary.md").write_text(md + "\n")
+ 
+     _, seed, first = keep["blind"]
+-    H, _ = workers(load_world(vdir / "hard" / "scene"), seed, TIERS["hard"][1], timeout + 1.0, S.DT)
+-    again = S.run_trial(worlds["hard"], H, "blind", legs["hard"], timeout)
+-    print(f"replay hard seed {seed} blind from a fresh world: {'identical' if digest(again) == digest(first) else 'DIFFERENT'} ({digest(first)})")
++    fresh_world = load_world(vdir / "hard" / "scene")
++    H, _ = workers(fresh_world, seed, TIERS["hard"][1], timeout + 1.0, S.DT)
++    again = S.run_trial(fresh_world, H, "blind", S.static_legs(fresh_world), timeout)
++    replay = {"tier": "hard", "policy": "blind", "seed": seed, "digest": digest(first),
++              "replay_digest": digest(again), "identical": digest(again) == digest(first)}
++    (out / "replay.json").write_text(json.dumps(replay, indent=1))
++    print(f"replay hard seed {seed} blind from a fresh world: {'identical' if replay['identical'] else 'DIFFERENT'} ({digest(first)})")
++    if not replay["identical"]:
++        raise RuntimeError("deterministic E3 replay differs; results must not enter the suite analysis")
+ 
+     for pol, (_, seed, res) in keep.items():
+         H, _ = workers(worlds["hard"], seed, TIERS["hard"][1], timeout + 1.0, S.DT)
+diff --git a/scripts/e3_select_scenes.py b/scripts/e3_select_scenes.py
+index 3d9a3af..fc18a73 100644
+--- a/scripts/e3_select_scenes.py
++++ b/scripts/e3_select_scenes.py
+@@ -74,6 +74,7 @@ def candidates(datasets, prompts_csv, check: bool) -> tuple[list[dict], list[dic
+ def usable(scene) -> str | None:
+     from worldc.e3.sim import static_legs
+     from worldc.e3.world import load_world
++    from worldc.e3.tiers import precheck
+ 
+     try:
+         w = load_world(scene)
+@@ -86,7 +87,10 @@ def usable(scene) -> str | None:
+     if len(w.goals) < 2:
+         return f"{len(w.goals)} robot goal(s)"
+     bad = [g["id"] for g, p in zip(w.goals, static_legs(w)) if p is None]
+-    return f"unreachable robot goals {bad}" if bad else None
++    if bad:
++        return f"unreachable robot goals {bad}"
++    ok, why = precheck(w, [])
++    return f"base layout fails the E3 aisle pre-check: {why}" if not ok else None
+ 
+ 
+ def select(cands: list[dict], n: int) -> list[dict]:
+diff --git a/src/worldc/e3/tiers.py b/src/worldc/e3/tiers.py
+index 9a15cbf..f005ccb 100644
+--- a/src/worldc/e3/tiers.py
++++ b/src/worldc/e3/tiers.py
+@@ -16,6 +16,7 @@ Both variants are rebuilt with the same compiler, so they differ only by the occ
+ from __future__ import annotations
+ 
+ import json
++import importlib.util
+ import math
+ from pathlib import Path
+ 
+@@ -36,6 +37,35 @@ ENDS_M = 1.0  # no unit within this of a walking path's ends
+ ATTEMPTS = 6
+ 
+ 
++def asset_imports(spec: dict) -> list[dict]:
++    """Reject degraded cached collision geometry before rebuilding an E1 layout."""
++    from ..assets import curated
++    from ..assets.catalog import cached_sidecar
++    from ..assets.mesh.mesh_asset import read_sidecar
++
++    table = curated.table()
++    aliases = sorted({obj["asset"] for obj in spec.get("objects", [])
++                      if isinstance(obj.get("asset"), str) and obj["asset"] in table})
++    imports = []
++    for alias in aliases:
++        entry = table[alias]
++        _, path = cached_sidecar(entry["path"], curated.overrides(alias, entry), root=curated.root_url(entry), rev=entry["rev"])
++        if not path.is_file():
++            if importlib.util.find_spec("coacd") is None:
++                raise RuntimeError(f"{alias}: E3 requires the mesh extra (CoACD) to import the original collision geometry; "
++                                   "install with `uv sync --extra mesh` before rebuilding.")
++            continue
++        sidecar = read_sidecar(path)
++        expected = entry.get("baked", {}).get("n_hulls", 1)
++        if expected > 1 and sidecar.provenance.decomposition != "coacd":
++            raise RuntimeError(f"{alias}: cached {sidecar.provenance.decomposition} collision geometry has "
++                               f"{sidecar.collision.n_hulls} hull(s), but the curated asset was baked with {expected}. "
++                               "Reimport with CoACD in a fresh XDG_CACHE_HOME; do not reuse a degraded fallback cache.")
++        imports.append({"alias": alias, "decomposition": sidecar.provenance.decomposition,
++                        "n_hulls": sidecar.collision.n_hulls, "source_sha256": sidecar.provenance.sha256})
++    return imports
++
++
+ def _rect(cx, cy, yaw, sx, sy) -> np.ndarray:
+     c, s = math.cos(yaw), math.sin(yaw)
+     loc = np.array([(-sx / 2, -sy / 2), (sx / 2, -sy / 2), (sx / 2, sy / 2), (-sx / 2, sy / 2)])
+@@ -150,14 +180,22 @@ def make_variants(scene_dir, out_dir, seed: int = 0, build_seed: int = 0, log=pr
+     n_agents = len(spec.get("agents", []))
+     base_spec = {**spec, "agents": []}
+     meta = {"base_scene": str(scene_dir), "robot_frame": {"travel_heading_rad": world.phi0, "source": world.robot["source"]},
+-            "agents_removed": n_agents}
++            "agents_removed": n_agents, "asset_imports": asset_imports(base_spec)}
+     res = {}
+     b = _build(base_spec, out_dir / "base", build_seed)
+     (out_dir / "base" / "scene" / "e3_variant.json").write_text(json.dumps({**meta, "tier": "base", "check": b}, indent=1))
+     res["base"] = b
+     log(f"base: {'ok' if b['ok'] else 'FAILED ' + str(b['errors'])} ({b['seconds']} s)")
++    if not b["ok"]:
++        res["hard"] = {"ok": False, "reason": "base scene failed static validation"}
++        return res
++    base_ok, base_reason = precheck(world, [])
++    if not base_ok:
++        res["hard"] = {"ok": False, "reason": f"base layout already fails the E3 hard-tier pre-check: {base_reason}"}
++        return res
+ 
+     rng = np.random.default_rng(seed)
++    asset_imports({"objects": [{"asset": OCCLUDER_ASSET}]})
+     n = int(rng.integers(OCCLUDERS_RANGE[0], OCCLUDERS_RANGE[1] + 1))
+     cands = candidates(world)
+     log(f"hard: {n} occluders from {len(cands)} candidate poses")
+diff --git a/tests/test_e3.py b/tests/test_e3.py
+index b515e38..a123102 100644
+--- a/tests/test_e3.py
++++ b/tests/test_e3.py
+@@ -105,3 +105,65 @@ def test_walkers_do_not_depend_on_path_query_order(room):
+             if p != q:
+                 other.human_path(p, q)
+     assert np.array_equal(workers(other, 3, 3, 60.0, S.DT)[0], a)
++
++
++def test_failed_base_does_not_build_hard_variants(room, tmp_path, monkeypatch):
++    import json
++    from worldc.e3 import tiers
++
++    scene = tmp_path / "source"
++    scene.mkdir()
++    (scene / "resolved_spec.json").write_text(json.dumps({"agents": [], "objects": []}))
++    builds = []
++    def failed_build(spec, out, seed):
++        builds.append(out)
++        (out / "scene").mkdir(parents=True)
++        return {"ok": False, "seconds": 0, "errors": ["check.interpenetration"]}
++    monkeypatch.setattr(tiers, "load_world", lambda path: room)
++    monkeypatch.setattr(tiers, "_build", failed_build)
++    result = tiers.make_variants(scene, tmp_path / "variants", log=lambda message: None)
++    assert len(builds) == 1
++    assert not result["base"]["ok"] and not result["hard"]["ok"]
++    assert result["hard"]["reason"] == "base scene failed static validation"
++
++
++def test_e3_rejects_degraded_cached_collision_imports(tmp_path, monkeypatch):
++    from types import SimpleNamespace
++    from worldc.e3 import tiers
++    from worldc.assets import curated, catalog
++    from worldc.assets.mesh import mesh_asset
++
++    cached = tmp_path / "bench.asset.yaml"
++    cached.write_text("unused")
++    entry = {"path": "bench.usd", "rev": "fixed", "baked": {"n_hulls": 16}}
++    monkeypatch.setattr(curated, "table", lambda: {"bench": entry})
++    monkeypatch.setattr(curated, "overrides", lambda *args: {})
++    monkeypatch.setattr(curated, "root_url", lambda *args: "source")
++    monkeypatch.setattr(catalog, "cached_sidecar", lambda *args, **kwargs: ("bench", cached))
++    sidecar = SimpleNamespace(provenance=SimpleNamespace(decomposition="single_hull", sha256="source"),
++                              collision=SimpleNamespace(n_hulls=1))
++    monkeypatch.setattr(mesh_asset, "read_sidecar", lambda path: sidecar)
++    with pytest.raises(RuntimeError, match="degraded fallback cache"):
++        tiers.asset_imports({"objects": [{"asset": "bench"}]})
++    sidecar.provenance.decomposition = "coacd"
++    sidecar.collision.n_hulls = 16
++    assert tiers.asset_imports({"objects": [{"asset": "bench"}]})[0]["n_hulls"] == 16
++
++
++def test_hard_tier_reports_an_ineligible_base_without_shelf_retries(room, tmp_path, monkeypatch):
++    import json
++    from worldc.e3 import tiers
++
++    scene = tmp_path / "source"
++    scene.mkdir()
++    (scene / "resolved_spec.json").write_text(json.dumps({"agents": [], "objects": []}))
++    def valid_build(spec, out, seed):
++        (out / "scene").mkdir(parents=True)
++        return {"ok": True, "seconds": 0, "errors": []}
++    monkeypatch.setattr(tiers, "load_world", lambda path: room)
++    monkeypatch.setattr(tiers, "_build", valid_build)
++    monkeypatch.setattr(tiers, "precheck", lambda world, units: (False, "storage point has no 1.2 m aisle"))
++    monkeypatch.setattr(tiers, "candidates", lambda world: pytest.fail("must not try shelves on an ineligible base"))
++    result = tiers.make_variants(scene, tmp_path / "variants", log=lambda message: None)
++    assert result["base"]["ok"] and not result["hard"]["ok"]
++    assert "storage point" in result["hard"]["reason"]
+diff --git a/src/worldc/e3/contact.py b/src/worldc/e3/contact.py
+new file mode 100644
+index 0000000..f120ad4
+--- /dev/null
++++ b/src/worldc/e3/contact.py
+@@ -0,0 +1,97 @@
++"""Impulse-confirmed PhysX contact episodes; no Isaac imports at module load."""
++from __future__ import annotations
++
++import json
++import math
++
++IMPULSE_THRESHOLD_NS = 1e-5
++
++
++def under(path, parent):
++    return path == parent or path.startswith(parent + "/")
++
++
++class ContactEpisodes:
++    def __init__(self, robot, floors):
++        self.robot, self.floors = robot, tuple(floors)
++        self.active, self.confirmed = set(), set()
++        self.floor_reports = self.raw_begins = self.physical_begins = 0
++        self.moving_begins = self.stationary_begins = 0
++
++    def observe(self, event, paths, impulse, moving):
++        if not any(under(path, self.robot) for path in paths):
++            return None
++        if all(under(path, self.robot) for path in paths):
++            return None
++        if any(under(path, floor) for path in paths for floor in self.floors):
++            self.floor_reports += 1
++            return None
++        key = tuple(sorted(paths))
++        if event == "lost":
++            self.active.discard(key)
++            self.confirmed.discard(key)
++            return {"new_physical_episode": False, "event": event}
++        if event not in ("found", "persist"):
++            raise ValueError(f"Unknown contact event {event}")
++        if key not in self.active:
++            self.active.add(key)
++            self.raw_begins += 1
++        new = impulse > IMPULSE_THRESHOLD_NS and key not in self.confirmed
++        if new:
++            self.confirmed.add(key)
++            self.physical_begins += 1
++            self.moving_begins += bool(moving)
++            self.stationary_begins += not bool(moving)
++        return {"new_physical_episode": new, "event": event}
++
++    def summary(self):
++        return {"physx_contact_episodes": self.physical_begins,
++                "physx_moving_contact_episodes": self.moving_begins,
++                "physx_stationary_contact_episodes": self.stationary_begins,
++                "physx_report_begins": self.raw_begins, "physx_floor_reports": self.floor_reports}
++
++
++class NativeContactRecorder:
++    def __init__(self, path, robot, floors, observation):
++        import omni.physx
++        from pxr import PhysicsSchemaTools
++        from omni.physx.bindings._physx import ContactEventType
++
++        self.counter = ContactEpisodes(robot, floors)
++        self.observation = observation
++        self.errors = []
++        self.stream = path.open("w", encoding="utf-8")
++        self.decode = PhysicsSchemaTools.intToSdfPath
++        self.names = {ContactEventType.CONTACT_FOUND: "found", ContactEventType.CONTACT_LOST: "lost",
++                      ContactEventType.CONTACT_PERSIST: "persist"}
++        self.subscription = omni.physx.get_physx_simulation_interface().subscribe_contact_report_events(self.callback)
++
++    def callback(self, headers, data):
++        try:
++            state = self.observation()
++            grouped = {}
++            for header in headers:
++                paths = [str(self.decode(header.collider0)), str(self.decode(header.collider1))]
++                contacts = data[header.contact_data_offset:header.contact_data_offset + header.num_contact_data]
++                impulse = max([math.sqrt(sum(float(v)**2 for v in contact.impulse)) for contact in contacts] or [0.0])
++                grouped.setdefault(tuple(sorted(paths)),[]).append((self.names[header.type],impulse))
++            for paths,reports in grouped.items():
++                # A mesh may report a lost contact patch and a persisting one in
++                # the same physics callback. Separation requires every patch lost.
++                live = [r for r in reports if r[0] != "lost"]
++                event = "persist" if live else "lost"
++                impulse = max([r[1] for r in live] or [0.0])
++                result = self.counter.observe(event, paths, impulse, state["moving"])
++                if result and (result["new_physical_episode"] or result["event"] in ("found", "lost")):
++                    self.stream.write(json.dumps({**result, "paths": paths, "t": float(state["t"]), "moving": bool(state["moving"]),
++                                                  "maximum_impulse_Ns": impulse}) + "\n")
++            self.stream.flush()
++        except Exception as error:
++            self.errors.append(f"{type(error).__name__}: {error}")
++
++    def close(self):
++        self.subscription = None
++        self.stream.close()
++
++    def summary(self):
++        return {**self.counter.summary(), "contact_callback_errors": list(self.errors)}
+diff --git a/src/worldc/e3/feedback.py b/src/worldc/e3/feedback.py
+new file mode 100644
+index 0000000..b5835bc
+--- /dev/null
++++ b/src/worldc/e3/feedback.py
+@@ -0,0 +1,194 @@
++"""Closed-loop E3 controller/metrics for an observed plant, version isaac-e3-v1.
++
++The frozen 2D simulator remains the reference. This port uses its constants,
++planners, footprint distances and policy helpers without modifying sim.py.
++The caller supplies measured poses/velocities; no robot integration occurs here.
++"""
++from __future__ import annotations
++
++import math
++import numpy as np
++
++from . import sim as S
++from .world import plan
++
++BACKEND = "isaac-physx-e3-v1"
++
++
++class FeedbackTrial:
++    def __init__(self, world, policy, people, legs=None, timeout=None):
++        if policy not in S.POLICIES:
++            raise ValueError(f"Unknown policy {policy}")
++        self.world, self.policy = world, policy
++        self.legs = S.static_legs(world) if legs is None else legs
++        self.timeout = S.timeout_s(world, self.legs) if timeout is None else timeout
++        self.leg, self.state, self.state_t = 0, "drive", 0.0
++        self.path = S.Path(self.legs[0]) if self.legs and self.legs[0] is not None else None
++        self.s_prog = 0.0
++        self.clear_since, self.holding = None, False
++        self.next_aware = self.next_replan = 0.0
++        self.replans = 0
++        self.hold_s = self.warning_s = 0.0
++        self.in_prot, self.protective_stops = False, 0
++        self.in_contact = np.zeros(people, bool)
++        self.collisions = self.moving_hits = self.moving_behind = self.moving_braking = 0
++        self.min_gap = self.min_gap_moving = math.inf
++        self.near = {b: 0.0 for b in S.NEAR_BANDS}
++        self.near_moving = {b: 0.0 for b in S.MOVING_BANDS}
++        self.stationary_s = self.stationary_near_s = self.hh_overlap = 0.0
++        self.trajectory, self.events, self.arrivals = [], [], []
++        self.prog_t, self.prog_xy = 0.0, world.spawn[:2]
++        self.end, self.t, self.k = None, 0.0, 0
++        self.v_cmd = self.w_cmd = 0.0
++
++    def observe(self, t, x, y, body_yaw, v, w, humans):
++        """Return (commanded forward m/s, yaw rad/s), or None when finished."""
++        if self.end is not None:
++            return None
++        expected = self.k * S.DT
++        if abs(t - expected) > 1e-5:
++            raise ValueError(f"Observation clock {t} differs from E3 control clock {expected}")
++        self.t, self.k = t, self.k + 1
++        H = np.asarray(humans, float).reshape(-1, 2)
++        if H.shape[0] != len(self.in_contact) or not np.isfinite([x, y, body_yaw, v, w]).all() or not np.isfinite(H).all():
++            raise ValueError("Invalid measured robot/human state")
++        if self.k - 1 >= int(self.timeout / S.DT):
++            self.end = "timeout"
++            return None
++        world, g = self.world, self.world.grid
++        th = S.wrap(body_yaw + world.phi0)
++        moving = abs(v) > S.MOVING_V or abs(w) > S.MOVING_W
++        gp = S.gaps(x, y, body_yaw, world.body_half, H)[0]
++        if not moving:
++            self.stationary_s += S.DT
++            self.stationary_near_s += S.DT * bool(len(gp) and gp.min() < S.STATIONARY_NEAR_M)
++        if len(gp):
++            ahead = math.cos(th) * (H[:, 0] - x) + math.sin(th) * (H[:, 1] - y)
++            gap = float(gp.min())
++            self.min_gap = min(self.min_gap, gap)
++            for b in self.near:
++                self.near[b] += S.DT * (gap < b)
++            if moving:
++                self.min_gap_moving = min(self.min_gap_moving, gap)
++                for b in self.near_moving:
++                    self.near_moving[b] += S.DT * (gap < b)
++            hit = gp <= 0.0
++            for i in np.flatnonzero(hit & ~self.in_contact):
++                self.collisions += 1
++                self.moving_hits += moving
++                self.moving_behind += int(moving and ahead[i] < 0)
++                self.moving_braking += int(moving and self.holding)
++                self.events.append({"type": "collision", "t": round(t, 2), "worker": int(i), "xy": [round(x, 2), round(y, 2)],
++                                    "robot_v": round(v, 2), "robot_w": round(w, 2), "robot_moving": bool(moving),
++                                    "ahead_x": round(float(ahead[i]), 2), "from_behind": bool(ahead[i] < 0),
++                                    "robot_holding": bool(self.holding), "state": self.state})
++            self.in_contact = hit
++            if len(H) > 1:
++                dd = np.hypot(*(H[:, None, :] - H[None, :, :]).transpose(2, 0, 1))
++                self.hh_overlap += S.DT * float((dd[np.triu_indices(len(H), 1)] < 2 * S.HUMAN_RADIUS_M).any())
++        if (self.k - 1) % 4 == 0:
++            self.trajectory.append([round(t, 2), round(x, 3), round(y, 3), round(th, 3), round(v, 3)])
++        if self.leg >= len(self.legs):
++            self.end = "done"
++            return None
++        if self.path is None:
++            self.end = "goal_unreachable"
++            return None
++        if (self.state == "drive" or (self.state == "align" and self.holding)) and math.hypot(x - self.prog_xy[0], y - self.prog_xy[1]) <= S.FROZEN_M:
++            if t - self.prog_t > S.FROZEN_S:
++                self.end = "frozen"
++                return None
++        else:
++            self.prog_t, self.prog_xy = t, (x, y)
++        gx, gy, gyaw = world.goals[self.leg]["pose"]
++        scale = 1.0
++        if self.policy == "fields" and self.state in ("drive", "align") and len(gp):
++            prot, warn = S.in_fields(world, x, y, th, v, w, H)
++            if prot.any():
++                self.protective_stops += not self.in_prot
++                self.holding, self.clear_since = True, None
++            elif self.holding:
++                self.clear_since = t if self.clear_since is None else self.clear_since
++                self.holding = t - self.clear_since < S.FIELDS["resume_clear_s"]
++            self.in_prot = bool(prot.any())
++            if warn.any():
++                self.warning_s += S.DT
++                scale = S.FIELDS["warning_scale"]
++        if self.policy == "aware" and len(gp):
++            scale = float(np.clip((gp.min() - S.SLOW_NEAR_M) / (S.SLOW_FAR_M - S.SLOW_NEAR_M), 0.0, 1.0))
++            if self.state == "align":
++                self.holding = scale <= 0.0
++            if self.state == "drive" and t >= self.next_aware:
++                self.next_aware = t + 1.0 / S.AWARE_HZ
++                blocked = S._human_block(world, H)
++                ss = np.arange(self.s_prog, min(self.s_prog + S.AWARE_LOOKAHEAD_M, self.path.length), g.res)
++                if any(blocked[g.clamp(g.cell(*self.path.point_at(s)))] for s in ss):
++                    if t >= self.next_replan:
++                        free = g.free & ~blocked
++                        r0, c0 = g.clamp(g.cell(x, y))
++                        free[max(r0 - 3, 0):r0 + 4, max(c0 - 3, 0):c0 + 4] = g.free[max(r0 - 3, 0):r0 + 4, max(c0 - 3, 0):c0 + 4]
++                        p = plan(g, free, (x, y), (gx, gy))
++                        self.replans += 1
++                        if p is not None:
++                            self.path, self.s_prog, self.holding = S.Path(p), 0.0, False
++                        else:
++                            self.holding, self.next_replan = True, t + 1.0
++                else:
++                    self.holding = False
++        v_t = w_t = 0.0
++        if self.state == "drive":
++            self.s_prog = self.path.closest(x, y, self.s_prog)
++            distance = math.hypot(gx - x, gy - y)
++            tx, ty = self.path.point_at(min(self.s_prog + S.LOOK, self.path.length))
++            alpha = S.wrap(math.atan2(ty - y, tx - x) - th)
++            if distance < 0.3:
++                self.state, self.state_t = "align", t
++            elif self.holding:
++                self.hold_s += S.DT
++            elif abs(alpha) > 0.7:
++                w_t = scale * float(np.clip(2 * alpha, -S.WMAX, S.WMAX))
++            else:
++                v_t = scale * S.VMAX * float(np.clip(distance / 1.5, 0.25, 1.0)) * (1.0 - 0.6 * abs(alpha))
++                w_t = scale * float(np.clip(2 * v_t * math.sin(alpha) / S.LOOK + 0.8 * alpha, -S.WMAX, S.WMAX))
++        if self.state == "align":
++            error = S.wrap(gyaw - th)
++            if self.holding:
++                self.state_t += S.DT
++                self.hold_s += S.DT
++            else:
++                w_t = scale * float(np.clip(1.8 * error, -1, 1)) if abs(error) > S.YAW_TOL else 0.0
++            if not self.holding and (abs(error) <= S.YAW_TOL or t - self.state_t > S.ALIGN_MAX_S):
++                self.arrivals.append({"goal": world.goals[self.leg]["id"], "reached": math.hypot(gx-x, gy-y) < S.REACH_M, "t": round(t, 2)})
++                self.state, self.state_t = "pause", t
++        if self.state == "pause" and t - self.state_t > S.PAUSE_S:
++            self.leg += 1
++            self.state, self.s_prog, self.holding, self.clear_since = "drive", 0.0, False, None
++            if self.leg < len(self.legs):
++                self.path = S.Path(self.legs[self.leg]) if self.legs[self.leg] is not None else None
++                if self.path is not None and self.policy == "aware":
++                    self.path = S.Path(np.vstack([[x, y], self.legs[self.leg][1:]]))
++        dec = world.robot["brake_decel_mps2"] if self.policy == "fields" and self.holding else S.DEC_V
++        self.v_cmd += float(np.clip(v_t-self.v_cmd, -dec*S.DT, S.ACC_V*S.DT))
++        self.w_cmd += float(np.clip(w_t-self.w_cmd, -S.ACC_W*S.DT, S.ACC_W*S.DT))
++        return self.v_cmd, self.w_cmd
++
++    def result(self):
++        if self.end is None:
++            raise RuntimeError("Cannot score an unfinished feedback trial")
++        reached = all(a["reached"] for a in self.arrivals)
++        outcome = "success" if self.end == "done" and reached and not self.moving_hits else (
++            "collision" if self.moving_hits else "goal_missed" if self.end == "done" else self.end)
++        fin = lambda value: round(value, 3) if math.isfinite(value) else None
++        return {"policy": self.policy, "success": outcome == "success", "outcome": outcome, "end": self.end,
++                "frozen": self.end == "frozen", "collisions_robot_moving": self.moving_hits,
++                "collisions_robot_moving_from_behind": self.moving_behind, "collisions_robot_moving_braking": self.moving_braking,
++                "collisions": self.collisions, "collisions_robot_stationary": self.collisions-self.moving_hits,
++                "time_to_goal_s": round(self.t, 2) if self.end == "done" else None, "sim_s": round(self.t, 2),
++                "min_gap_m": fin(self.min_gap), "min_gap_moving_m": fin(self.min_gap_moving),
++                **{f"time_within_{b:g}m_s": round(v, 2) for b, v in self.near.items()},
++                **{f"time_within_{b:g}m_moving_s": round(v, 2) for b, v in self.near_moving.items()},
++                "stationary_s": round(self.stationary_s, 2), "stationary_near_1m_s": round(self.stationary_near_s, 2),
++                "human_human_overlap_s": round(self.hh_overlap, 2), "goals_reached": sum(a["reached"] for a in self.arrivals),
++                "n_goals": len(self.legs), "replans": self.replans, "hold_s": round(self.hold_s, 2),
++                "protective_stops": self.protective_stops, "field_warning_s": round(self.warning_s, 2),
++                "events": self.events, "arrivals": self.arrivals, "trajectory": self.trajectory}
+diff --git a/src/worldc/e3/wire.py b/src/worldc/e3/wire.py
+new file mode 100644
+index 0000000..09c5d0d
+--- /dev/null
++++ b/src/worldc/e3/wire.py
+@@ -0,0 +1,24 @@
++"""Bounded newline-JSON protocol on a private loopback connection."""
++import json
++
++MAX_MESSAGE_BYTES = 4 * 1024 * 1024
++
++
++def send(stream, message):
++    payload = json.dumps(message, allow_nan=False).encode() + b"\n"
++    if len(payload) > MAX_MESSAGE_BYTES:
++        raise ValueError("E3 bridge message too large")
++    stream.write(payload)
++    stream.flush()
++
++
++def receive(stream):
++    payload = stream.readline(MAX_MESSAGE_BYTES + 1)
++    if not payload:
++        raise ConnectionError("Isaac bridge closed before its result")
++    if len(payload) > MAX_MESSAGE_BYTES or not payload.endswith(b"\n"):
++        raise ValueError("Invalid or oversized E3 bridge message")
++    message = json.loads(payload)
++    if not isinstance(message, dict):
++        raise ValueError("E3 bridge expects an object")
++    return message
+diff --git a/src/worldc/e3/isaac_experiment.py b/src/worldc/e3/isaac_experiment.py
+new file mode 100644
+index 0000000..96b3262
+--- /dev/null
++++ b/src/worldc/e3/isaac_experiment.py
+@@ -0,0 +1,414 @@
++"""Prepare and supervise the full E3 experiment with an isolated Isaac runtime.
++
++Host dependencies stay in worldc's environment. Kit receives only a JSON
++manifest, NumPy worker tracks, and the small contact/wire modules.
++"""
++from __future__ import annotations
++
++import csv
++from contextlib import contextmanager
++import hashlib
++import importlib.util
++import json
++import os
++from pathlib import Path
++import secrets
++import socket
++import subprocess
++import sys
++import time
++
++import numpy as np
++
++from . import sim as S
++from .feedback import BACKEND, FeedbackTrial
++from .tiers import make_variants
++from .walkers import workers
++from .wire import send, receive
++from .world import load_world
++from ..assets import robots
++
++ROOT = Path(__file__).resolve().parents[3]
++PHYSICS_DT = 1 / 120
++TIERS = {"easy": ("base", 1), "medium": ("base", 3), "hard": ("hard", 6)}
++
++
++def write_json(path, content):
++    path.write_text(json.dumps(content, indent=2, allow_nan=False), encoding="utf-8")
++
++
++def script(name):
++    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def prepare(selection, out, seeds=10, transform_seed=0):
++    if seeds < 1:
++        raise ValueError("seeds must be positive")
++    if out.exists() and any(out.iterdir()):
++        raise ValueError("Use a new empty experiment directory")
++    suite = script("e3_suite")
++    chosen = suite.load_selection(selection)
++    provenance = suite.policy_preflight()
++    out.mkdir(parents=True, exist_ok=True)
++    manifest = {"schema": "e3-isaac-experiment-v1", "backend": BACKEND, "status": "preparing",
++                "selection": str(selection.resolve()), "seeds": seeds, "selected": chosen,
++                "planned_trials": len(chosen)*seeds*9, "control_dt": S.DT, "physics_dt": PHYSICS_DT,
++                "transform_seed":transform_seed,
++                "observations": "perfect measured simulator state; no perception model",
++                "humans": "seeded nonreactive kinematic capsules, radius 0.26 m",
++                "policy_provenance": provenance, "scenes": [], "trials": [], "failures": [],
++                "implementation_sha256": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
++                    for p in [*sorted((ROOT / "src/worldc").rglob("*.py")),
++                              ROOT/"src/worldc/assets/library/robots/isaac_5.1_robots.json",
++                              ROOT/"src/worldc/assets/library/catalog/simready_curated.json", ROOT/"uv.lock",
++                              ROOT/"scripts/e3_isaac_suite.py", ROOT/"scripts/e3_suite.py",
++                              ROOT/"src/worldc/render/e3_isaac_probe.py", ROOT/"src/worldc/render/e3_boot.py",
++                              ROOT/"src/worldc/render/e3_isaac.kit", ROOT/"scripts/e3_analysis.py",
++                              ROOT/"scripts/e3_isaac_analysis.py"]}}
++    for item in chosen:
++        label = item["prompt"]
++        destination = out / label
++        destination.mkdir()
++        try:
++            variants = make_variants(item["scene"], destination / "scenes", seed=transform_seed)
++            if not (variants["base"]["ok"] and variants["hard"]["ok"]):
++                raise ValueError(f"Variant checks failed: {variants}")
++            worlds = {variant: load_world(destination / "scenes" / variant / "scene") for variant in ("base", "hard")}
++            timeouts = {variant: S.timeout_s(world, S.static_legs(world)) for variant, world in worlds.items()}
++            timeout = max(timeouts.values())
++            scene_info = {**item, "status": "prepared", "timeout_s": timeout, "variants": variants}
++            manifest["scenes"].append(scene_info)
++            for tier, (variant, count) in TIERS.items():
++                world = worlds[variant]
++                scene_graph = destination/"scenes"/variant/"scene/scene_graph.json"
++                usd_name = json.loads(scene_graph.read_text()).get("usd","scene.usd")
++                drive = robots.DIFF_DRIVE.get(world.robot["asset"])
++                if drive is None:
++                    raise ValueError(f"No calibrated differential-drive mapping for {world.robot['asset']}")
++                for seed in range(seeds):
++                    H, info = workers(world, seed, count, timeout + 1, S.DT)
++                    track_path = destination / f"{tier}_seed{seed}.npz"
++                    np.savez_compressed(track_path, human_xy=H)
++                    workers_path = track_path.with_suffix(".json")
++                    write_json(workers_path, info)
++                    for policy in S.POLICIES:
++                        trial_id = f"{label}_{tier}_seed{seed}_{policy}"
++                        trial_dir = destination / trial_id
++                        trial_dir.mkdir()
++                        row = {"id": trial_id, "scene": label, "tier": tier, "variant": variant,
++                               "seed": seed, "policy": policy, "workers": count, "status": "pending",
++                               "scene_dir": str((destination / "scenes" / variant / "scene").resolve()),
++                               "out": str(trial_dir.resolve()), "human_track": str(track_path.resolve()),
++                               "workers_drawn": str(workers_path.resolve()),
++                               "scene_usd":usd_name,
++                               "human_track_sha256": hashlib.sha256(track_path.read_bytes()).hexdigest(),
++                               "scene_usd_sha256": hashlib.sha256((destination/"scenes"/variant/"scene"/usd_name).read_bytes()).hexdigest(),
++                               "scene_graph_sha256": hashlib.sha256((destination/"scenes"/variant/"scene/scene_graph.json").read_bytes()).hexdigest(),
++                               "timeout_s": timeout, "control_dt": S.DT, "physics_dt": PHYSICS_DT,
++                               "robot": world.robot, "drive": drive, "body_half": list(world.body_half),
++                               "impulse_threshold_Ns": 1e-5}
++                        write_json(trial_dir / "trial.json", row)
++                        manifest["trials"].append(row)
++        except Exception as error:
++            manifest["failures"].append({"scene": label, "error": f"{type(error).__name__}: {error}"})
++        write_json(out / "experiment.json", manifest)
++    manifest["status"] = "prepared" if not manifest["failures"] and len(manifest["trials"]) == manifest["planned_trials"] else "preparation_failed"
++    write_json(out / "experiment.json", manifest)
++    return manifest
++
++
++def runtime_version(python):
++    command = [str(python), "-c", "import importlib.metadata as m; print(m.version('isaacsim'))"]
++    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
++    if result.returncode:
++        root_version = python.parent / "VERSION"
++        if root_version.is_file():
++            return root_version.read_text().strip()
++        raise RuntimeError(f"Cannot identify Isaac runtime: {result.stderr[-1000:]}")
++    return result.stdout.strip().splitlines()[-1]
++
++
++def check_runtime(python, allow_45=False):
++    if not python.is_file():
++        raise ValueError(f"Isaac interpreter does not exist: {python}")
++    version = runtime_version(python)
++    pair = tuple(int(part) for part in version.split(".")[:2])
++    minimum = (4, 5) if allow_45 else (5, 0)
++    if pair < minimum:
++        raise ValueError(f"Isaac Sim {version} is below {minimum}; an older engine must be explicitly selected as a separate backend")
++    return version
++
++
++def verify_trial_inputs(trial):
++    if hashlib.sha256(Path(trial["human_track"]).read_bytes()).hexdigest()!=trial["human_track_sha256"]:
++        raise ValueError("Seeded human track changed after preparation")
++    for filename,key in ((trial.get("scene_usd","scene.usd"),"scene_usd_sha256"),("scene_graph.json","scene_graph_sha256")):
++        if hashlib.sha256((Path(trial["scene_dir"])/filename).read_bytes()).hexdigest()!=trial[key]:
++            raise ValueError(f"Prepared scene changed: {filename}")
++
++
++def launch_trial(trial, native_python, boot_timeout=180, wall_timeout=900):
++    """One isolated physics process per trial; fail rather than reuse 2D motion."""
++    verify_trial_inputs(trial)
++    world = load_world(trial["scene_dir"])
++    control = FeedbackTrial(world, trial["policy"], trial["workers"], timeout=trial["timeout_s"])
++    destination = Path(trial["out"])
++    token = secrets.token_hex(24)
++    server = socket.socket()
++    server.bind(("127.0.0.1", 0))
++    server.listen(1)
++    server.settimeout(boot_timeout)
++    env = os.environ.copy()
++    env["PYTHONPATH"] = str(ROOT / "src")  # Never inject host usd-core/NumPy into Kit.
++    command = [str(native_python), "-m", "worldc.render.e3_isaac", str(destination / "trial.json"),
++               "--port", str(server.getsockname()[1]), "--token", token]
++    began = time.monotonic()
++    process = None
++    try:
++        with (destination / "native.log").open("w", encoding="utf-8") as log:
++            process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
++            server.settimeout(0.5)
++            while True:
++                try:
++                    conn, _ = server.accept()
++                    break
++                except socket.timeout:
++                    if process.poll() is not None:
++                        raise RuntimeError("Isaac exited before bridge initialization; see native_error.txt and native.log")
++                    if time.monotonic()-began > boot_timeout:
++                        raise TimeoutError("Isaac did not initialize before the boot deadline")
++            conn.settimeout(boot_timeout)
++            with conn, conn.makefile("rwb") as stream:
++                ready = receive(stream)
++                if ready.get("type") != "ready" or ready.get("token") != token:
++                    raise RuntimeError("Isaac bridge authentication/initialization failed")
++                world.robot["travel_heading_rad"] = ready["calibration"]["travel_heading_in_robot_frame_rad"]
++                while True:
++                    if time.monotonic()-began > wall_timeout:
++                        raise TimeoutError("Isaac trial exceeded the wall-clock budget")
++                    message = receive(stream)
++                    if message.get("type") == "error":
++                        raise RuntimeError(message.get("error", "Isaac worker failed"))
++                    if message.get("type") != "observation":
++                        raise RuntimeError(f"Unexpected bridge message {message.get('type')}")
++                    if abs(message["t"]-message["physics_time"]) > 1e-4:
++                        raise RuntimeError(f"Isaac physics and controller clocks diverged: controller={message['t']}, physics={message['physics_time']}")
++                    command_vw = control.observe(message["t"], *message["robot"], message["humans"])
++                    if message.get("physics_failure"):
++                        control.end = "physics_failure"
++                        command_vw = None
++                    send(stream, {"type": "command", "done": command_vw is None,
++                                  "v": command_vw[0] if command_vw else 0.0,
++                                  "w": command_vw[1] if command_vw else 0.0})
++                    if command_vw is None:
++                        final = receive(stream)
++                        if final.get("type") != "finished":
++                            raise RuntimeError("Isaac did not acknowledge the terminal command")
++                        break
++            remaining = max(1, wall_timeout-(time.monotonic()-began))
++            if process.wait(timeout=remaining):
++                raise RuntimeError("Isaac exited unsuccessfully; see native.log")
++        physics = final["physics"]
++        if physics["contact_callback_errors"] or physics["physx_floor_reports"] < 1:
++            raise RuntimeError("PhysX contact instrumentation failed its delivery check")
++        result = {**control.result(), **physics, "backend": BACKEND,
++                  "isaac_version": ready["isaac_version"], "calibration": ready["calibration"],
++                  "wall_s": round(time.monotonic()-began, 2)}
++        complete = result["end"] == "done" and result["goals_reached"] == result["n_goals"]
++        result["physx_success"] = complete and physics["physx_moving_contact_episodes"] == 0
++        result["physx_contact_free_success"] = complete and physics["physx_contact_episodes"] == 0
++        write_json(destination / "result.json", result)
++        return result
++    finally:
++        server.close()
++        if process is not None and process.poll() is None:
++            # Hard timeout or broken measurement bridge: do not leave Kit on the GPU.
++            if os.name == "nt":
++                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
++            else:
++                process.kill()
++            process.wait(timeout=30)
++
++
++def contact_probe(out, native_python):
++    attempt = len(list(out.glob("contact_probe_*")))+1
++    destination = out / f"contact_probe_{attempt}"
++    destination.mkdir()
++    env = os.environ.copy()
++    env["PYTHONPATH"] = str(ROOT/"src")
++    with (destination/"native.log").open("w",encoding="utf-8") as log:
++        process = subprocess.Popen([str(native_python),"-m","worldc.render.e3_isaac_probe",str(destination)],
++                                   env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT)
++        try:
++            code = process.wait(timeout=300)
++        except subprocess.TimeoutExpired:
++            if os.name == "nt":
++                subprocess.run(["taskkill","/PID",str(process.pid),"/T","/F"],capture_output=True)
++            else:
++                process.kill()
++            process.wait(timeout=30)
++            raise TimeoutError("Isaac contact probe exceeded 300 seconds")
++    receipt_path = destination/"probe.json"
++    receipt = json.loads(receipt_path.read_text()) if receipt_path.is_file() else {}
++    if code or not receipt.get("passed"):
++        raise RuntimeError(f"Native contact probe did not pass; see {destination/'native.log'}")
++    return receipt
++
++
++def replay_check(first, repeated):
++    """Predeclared physical replay tolerance, never adjusted after outcomes."""
++    a, b = np.asarray(first["trajectory"],float), np.asarray(repeated["trajectory"],float)
++    if not len(a) or not len(b):
++        return {"passed":False,"reason":"missing measured trajectories"}
++    times = a[:,0][a[:,0] <= b[-1,0]]
++    bx = np.interp(times,b[:,0],b[:,1])
++    by = np.interp(times,b[:,0],b[:,2])
++    delta = float(np.hypot(a[:len(times),1]-bx,a[:len(times),2]-by).max())
++    angle = np.interp(times,b[:,0],np.unwrap(b[:,3]))
++    angle_error = float(np.abs((a[:len(times),3]-angle+np.pi)%(2*np.pi)-np.pi).max())
++    duration_error = abs(first["sim_s"]-repeated["sim_s"])
++    discrete = all(first[k]==repeated[k] for k in ("outcome","goals_reached","collisions_robot_moving","physx_contact_episodes"))
++    return {"passed":bool(discrete and delta<=0.01 and angle_error<=0.02 and duration_error<=0.1),
++            "maximum_xy_error_m":delta,"maximum_heading_error_rad":angle_error,"duration_error_s":duration_error,
++            "discrete_results_match":discrete,"xy_tolerance_m":0.01,"heading_tolerance_rad":0.02,"time_tolerance_s":0.1}
++
++
++@contextmanager
++def campaign_lock():
++    """Prevent concurrent native campaigns in this project; OS releases on crash."""
++    handle = (ROOT/".e3-isaac.lock").open("a+b")
++    try:
++        if handle.seek(0,2)==0:
++            handle.write(b"0")
++            handle.flush()
++        handle.seek(0)
++        if os.name=="nt":
++            import msvcrt
++            msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
++        else:
++            import fcntl
++            fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
++        yield
++    finally:
++        handle.close()
++
++
++def execute(out, native_python, allow_45=False, resume=False):
++    with campaign_lock():
++        return _execute(out,native_python,allow_45,resume)
++
++
++def _execute(out, native_python, allow_45=False, resume=False):
++    manifest_path = out / "experiment.json"
++    manifest = json.loads(manifest_path.read_text())
++    permitted = ("prepared","runtime_blocked","instrumentation_blocked") + (("running","verifying") if resume else ())
++    if manifest["status"] not in permitted:
++        raise ValueError("Experiment must be completely prepared before physical trials")
++    for path,digest in manifest["implementation_sha256"].items():
++        if hashlib.sha256((ROOT/path).read_bytes()).hexdigest()!=digest:
++            raise ValueError(f"Implementation changed after preparation: {path}")
++    try:
++        version = check_runtime(native_python, allow_45)
++        if any(t["status"]=="complete" for t in manifest["trials"]) and manifest.get("isaac_version",version)!=version:
++            raise ValueError("Resume requires the same Isaac engine version")
++    except Exception as error:
++        manifest.update(status="runtime_blocked",error=str(error))
++        write_json(manifest_path,manifest)
++        return manifest
++    manifest.update(status="running", isaac_python=str(native_python), isaac_version=version)
++    write_json(manifest_path, manifest)
++    try:
++        manifest["contact_probe"] = contact_probe(out,native_python)
++    except Exception as error:
++        manifest.update(status="instrumentation_blocked",error=str(error))
++        write_json(manifest_path,manifest)
++        return manifest
++    rows = []
++    for trial in manifest["trials"]:
++        print(f"Isaac {trial['id']}", flush=True)
++        try:
++            verify_trial_inputs(trial)
++            if trial["status"]=="complete":
++                result_path = Path(trial["out"])/"result.json"
++                if hashlib.sha256(result_path.read_bytes()).hexdigest()!=trial.get("result_sha256"):
++                    raise ValueError("Completed trial result changed; resume is blocked")
++                result = json.loads(result_path.read_text())
++                for filename,digest in trial["evidence_sha256"].items():
++                    if hashlib.sha256((Path(trial["out"])/filename).read_bytes()).hexdigest()!=digest:
++                        raise ValueError(f"Completed native evidence changed: {filename}")
++            else:
++                destination = Path(trial["out"])
++                if (destination/"native.log").exists():
++                    # Interrupted native attempts remain evidence; resume uses a new directory.
++                    original = destination
++                    attempt = 1
++                    while (original/f"resume_attempt_{attempt}").exists():
++                        attempt += 1
++                    destination = original/f"resume_attempt_{attempt}"
++                    destination.mkdir()
++                    trial["out"] = str(destination)
++                    write_json(destination/"trial.json",trial)
++                result = launch_trial(trial, native_python)
++                trial["result_sha256"] = hashlib.sha256((destination/"result.json").read_bytes()).hexdigest()
++                trial["evidence_sha256"] = {name:hashlib.sha256((destination/name).read_bytes()).hexdigest()
++                    for name in ("native_setup.json","physics_summary.json","physics_trace.npz","physx_contacts.jsonl")}
++            row = {"scene": trial["scene"], "tier": trial["tier"], "variant": trial["variant"], "seed": trial["seed"],
++                   "workers": trial["workers"], "timeout_s": trial["timeout_s"],
++                   "e3_policies":manifest["policy_provenance"]["e3_policies"],
++                   "e3_policies_commit":manifest["policy_provenance"]["e3_policies_commit"],
++                   "code_commit":manifest["policy_provenance"]["code_commit"], "policies_at_tag":True,
++                   **{k: v for k, v in result.items() if k not in ("events", "arrivals", "trajectory", "calibration", "contact_callback_errors", "contact_bodies", "floor_paths")}}
++            rows.append(row)
++            trial["status"] = "complete"
++        except Exception as error:
++            trial.update(status="failed", error=f"{type(error).__name__}: {error}")
++            manifest["failures"].append({"trial": trial["id"], "error": trial["error"]})
++            # Infrastructure/measurement failure must not trigger hundreds of identical attempts.
++            write_json(manifest_path,manifest)
++            break
++        manifest["completed_trials"] = len(rows)
++        write_json(manifest_path, manifest)
++        with (out/"trials.csv").open("w",newline="",encoding="utf-8") as handle:
++            writer=csv.DictWriter(handle,fieldnames=list(rows[0]))
++            writer.writeheader()
++            writer.writerows(rows)
++    if rows:
++        with (out / "trials.csv").open("w", newline="", encoding="utf-8") as handle:
++            writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
++            writer.writeheader()
++            writer.writerows(rows)
++    manifest["completed_trials"] = len(rows)
++    manifest["status"] = "verifying" if len(rows) == manifest["planned_trials"] and not manifest["failures"] else "failed"
++    if manifest["status"] == "verifying":
++        manifest["replays"] = []
++        for original in (t for t in manifest["trials"] if t["tier"]=="hard" and t["seed"]==0 and t["policy"]=="blind"):
++            first = json.loads((Path(original["out"])/"result.json").read_text())
++            replay_dir = out/"replay"/original["scene"]
++            attempt = 1
++            while replay_dir.exists():
++                replay_dir = out/"replay"/f"{original['scene']}_attempt_{attempt}"
++                attempt += 1
++            repeated = {**original,"out":str(replay_dir)}
++            Path(repeated["out"]).mkdir(parents=True)
++            write_json(Path(repeated["out"])/"trial.json",repeated)
++            try:
++                again = launch_trial(repeated,native_python)
++                check = {"scene":original["scene"],**replay_check(first,again)}
++            except Exception as error:
++                check = {"scene":original["scene"],"passed":False,"error":str(error)}
++            manifest["replays"].append(check)
++            write_json(manifest_path,manifest)
++        if not all(r["passed"] for r in manifest["replays"]):
++            manifest["status"] = "replay_failed"
++            write_json(manifest_path,manifest)
++            return manifest
++        analysis = subprocess.run([sys.executable, str(ROOT / "scripts/e3_isaac_analysis.py"), str(out / "trials.csv"),
++                                   "--out", str(out / "analysis"), "--boot", "2000"], capture_output=True, text=True)
++        (out / "analysis.log").write_text(analysis.stdout+analysis.stderr, encoding="utf-8")
++        manifest["analysis"] = "complete" if analysis.returncode == 0 else "failed"
++        manifest["status"] = "failed" if analysis.returncode else "complete"
++    write_json(manifest_path, manifest)
++    return manifest
+diff --git a/src/worldc/render/e3_boot.py b/src/worldc/render/e3_boot.py
+new file mode 100644
+index 0000000..0cbd823
+--- /dev/null
++++ b/src/worldc/render/e3_boot.py
+@@ -0,0 +1,31 @@
++"""Minimal Kit startup shared by the contact probe and E3 physical trials."""
++from pathlib import Path
++
++
++def start_app():
++    import torch  # noqa: F401 -- Windows Kit DLL initialization order.
++    import isaacsim
++    from isaacsim import SimulationApp
++
++    package = Path(isaacsim.__file__).parent
++    extra = [arg for name in ("exts", "extscache", "extsPhysics") if (package/name).is_dir()
++             for arg in ("--ext-folder", str(package/name))]
++    extra += ["--enable", "isaacsim.core.api", "--enable", "isaacsim.core.prims"]
++    return SimulationApp({"headless": True, "multi_gpu": False, "extra_args": extra}, experience=str(Path(__file__).with_name("e3_isaac.kit")))
++
++
++def physics_step(simulation, dt):
++    """Step PhysX explicitly and verify its callback clock, including Isaac 4.5.
++
++    Isaac 4.5's SimulationManager may have an empty scene registry when opening
++    an existing stage; its get_physics_dt then silently returns 1/60. Passing
++    dt to PhysX avoids that fallback without mutating private manager state.
++    """
++    import omni.physx
++    physics = omni.physx.get_physx_simulation_interface()
++    before = simulation.current_time
++    physics.simulate(dt, before)
++    physics.fetch_results()
++    measured = simulation.current_time-before
++    if abs(measured-dt) > 1e-7:
++        raise RuntimeError(f"PhysX callback time step mismatch: expected {dt}, measured {measured}")
+diff --git a/src/worldc/render/e3_isaac.py b/src/worldc/render/e3_isaac.py
+new file mode 100644
+index 0000000..2ee7a2d
+--- /dev/null
++++ b/src/worldc/render/e3_isaac.py
+@@ -0,0 +1,273 @@
++"""Isaac-only measured plant for E3. Launch with Kit's Python, not host Python.
++
++No host USD, SciPy, or pydantic dependencies are injected into this process.
++Robot motion uses articulated wheel velocity targets; only scripted humans
++receive kinematic pose targets. Never replays a saved robot trajectory.
++"""
++from __future__ import annotations
++
++import argparse
++import importlib.metadata
++import json
++import math
++from pathlib import Path
++import socket
++import time
++import traceback
++
++
++def main():
++    parser = argparse.ArgumentParser()
++    parser.add_argument("trial", type=Path)
++    parser.add_argument("--port", required=True, type=int)
++    parser.add_argument("--token", required=True)
++    args = parser.parse_args()
++    trial = json.loads(args.trial.read_text())
++    out = Path(trial["out"])
++    from worldc.render.e3_boot import start_app, physics_step
++    app = start_app()
++    conn = None
++    recorder = None
++    try:
++        import numpy as np
++        import omni.usd
++        import omni.physics.tensors as tensors
++        from pxr import Gf, Usd, UsdGeom, UsdPhysics, PhysxSchema
++        from isaacsim.core.api import SimulationContext
++        from worldc.e3.contact import NativeContactRecorder
++        from worldc.e3.wire import send, receive
++
++        dt = float(trial["physics_dt"])
++        control_dt = float(trial["control_dt"])
++        substeps = round(control_dt/dt)
++        if abs(substeps*dt-control_dt) > 1e-10:
++            raise ValueError("Control period must be an integer number of physics steps")
++        H = np.load(trial["human_track"])["human_xy"]
++        graph = json.loads((Path(trial["scene_dir"])/"scene_graph.json").read_text())
++        context = omni.usd.get_context()
++        context.open_stage(str(Path(trial["scene_dir"])/graph.get("usd", "scene.usd")))
++        began = time.monotonic()
++        while context.get_stage_loading_status()[2] > 0:
++            if time.monotonic()-began > 120:
++                raise TimeoutError("Isaac scene assets did not finish loading")
++            app.update()
++        for _ in range(10):
++            app.update()
++        stage = context.get_stage()
++        robot_path = graph["robot"]["prim"]
++        root_prim = stage.GetPrimAtPath(robot_path)
++        if not root_prim:
++            raise RuntimeError("Scene has no real robot prim")
++        # Physics overrides must reach instance proxies throughout the stage:
++        # robot links need reports and environment visuals must not collide.
++        while True:
++            instances = [p for p in stage.Traverse() if p.IsInstance()]
++            if not instances:
++                break
++            for prim in instances:
++                prim.SetInstanceable(False)
++        articulation = next((prim for prim in Usd.PrimRange(root_prim, Usd.TraverseInstanceProxies())
++                             if prim.HasAPI(UsdPhysics.ArticulationRootAPI)), None)
++        if articulation is None:
++            raise RuntimeError("Robot articulation did not load; no proxy or kinematic robot fallback is permitted")
++        floors, contact_bodies = [], []
++        disabled_visual_colliders = 0
++        for prim in stage.Traverse():
++            if not (str(prim.GetPath()) == robot_path or str(prim.GetPath()).startswith(robot_path+"/")):
++                if prim.HasAPI(UsdPhysics.RigidBodyAPI):
++                    body = UsdPhysics.RigidBodyAPI(prim)
++                    if "/Visual" in str(prim.GetPath()):
++                        body.CreateRigidBodyEnabledAttr(False)
++                        prim.RemoveAPI(UsdPhysics.RigidBodyAPI)
++                    else:
++                        body.CreateKinematicEnabledAttr(True)
++                if prim.HasAPI(UsdPhysics.ArticulationRootAPI):
++                    prim.RemoveAPI(UsdPhysics.ArticulationRootAPI)
++                if prim.IsA(UsdPhysics.Joint):
++                    UsdPhysics.Joint(prim).CreateJointEnabledAttr(False)
++                if "/Visual" in str(prim.GetPath()) and prim.HasAPI(UsdPhysics.CollisionAPI):
++                    UsdPhysics.CollisionAPI(prim).CreateCollisionEnabledAttr(False)
++                    disabled_visual_colliders += 1
++            for namespace in ("scene", "warehouse", "plant"):
++                attr = prim.GetAttribute(namespace+":category")
++                if attr and attr.Get() == "floor":
++                    floors.append(str(prim.GetPath()))
++            if str(prim.GetPath()).startswith(robot_path+"/") and prim.HasAPI(UsdPhysics.RigidBodyAPI):
++                PhysxSchema.PhysxContactReportAPI.Apply(prim).CreateThresholdAttr(0.0)
++                contact_bodies.append(str(prim.GetPath()))
++        if not floors:
++            raise RuntimeError("Could not identify the floor for contact filtering")
++        if not contact_bodies:
++            raise RuntimeError("No robot rigid bodies available for contact reporting")
++        remaining = [str(p.GetPath()) for p in stage.Traverse()
++                     if not str(p.GetPath()).startswith(robot_path+"/") and "/Visual" in str(p.GetPath())
++                     and p.HasAPI(UsdPhysics.CollisionAPI)
++                     and UsdPhysics.CollisionAPI(p).GetCollisionEnabledAttr().Get()]
++        setup = {"disabled_visual_colliders":disabled_visual_colliders,"remaining_enabled_visual_colliders":remaining,
++                 "contact_bodies":contact_bodies,"floor_paths":floors}
++        (out/"native_setup.json").write_text(json.dumps(setup,indent=2),encoding="utf-8")
++        if remaining:
++            raise RuntimeError("Inherited visual colliders remain enabled")
++        human_paths = []
++        radius, height = 0.26, 1.775
++        for i in range(trial["workers"]):
++            path = f"/World/E3Workers/worker_{i}"
++            capsule = UsdGeom.Capsule.Define(stage, path)
++            capsule.CreateRadiusAttr(radius)
++            capsule.CreateHeightAttr(height-2*radius)
++            capsule.CreateAxisAttr("Z")
++            UsdGeom.Xformable(capsule.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(0, 0, -20))
++            UsdPhysics.CollisionAPI.Apply(capsule.GetPrim())
++            body = UsdPhysics.RigidBodyAPI.Apply(capsule.GetPrim())
++            body.CreateKinematicEnabledAttr(True)
++            UsdPhysics.MassAPI.Apply(capsule.GetPrim()).CreateMassAttr(70.0)
++            human_paths.append(path)
++        physics_scenes = [p for p in stage.Traverse() if p.IsA(UsdPhysics.Scene)]
++        if len(physics_scenes) != 1:
++            raise RuntimeError(f"Expected one authored PhysicsScene, found {len(physics_scenes)}")
++        simulation = SimulationContext(physics_dt=dt, rendering_dt=1/60, stage_units_in_meters=1.0, backend="numpy",
++                                       physics_prim_path=str(physics_scenes[0].GetPath()))
++        simulation.initialize_physics()
++        simulation.play()
++        physics_step(simulation, dt)
++        sv = tensors.create_simulation_view("numpy")
++        robot = sv.create_articulation_view(str(articulation.GetPath()))
++        humans = sv.create_rigid_body_view(human_paths)
++        names = list(robot.shared_metatype.dof_names)
++        left = [names.index(name) for name in trial["drive"]["left"]]
++        right = [names.index(name) for name in trial["drive"]["right"]]
++        index = np.array([0], np.int32)
++        human_indices = np.arange(len(human_paths), dtype=np.int32)
++        count = len(names)
++
++        def yaw(q):
++            return math.atan2(2*(q[3]*q[2]+q[0]*q[1]), 1-2*(q[1]*q[1]+q[2]*q[2]))
++
++        def wrap(angle):
++            return (angle+math.pi) % (2*math.pi)-math.pi
++
++        def wheel_step(wl=0.0, wr=0.0):
++            targets = np.zeros((1, count), np.float32)
++            targets[0, left], targets[0, right] = wl, wr
++            robot.set_dof_velocity_targets(targets, index)
++            physics_step(simulation, dt)
++
++        # Calibrate the real articulation, then reset its full state before t=0.
++        for _ in range(round(1/dt)):
++            wheel_step()
++        initial_root = np.array(robot.get_root_transforms(), copy=True)
++        initial_joints = np.array(robot.get_dof_positions(), copy=True)
++        for k in range(round(0.9/dt)):
++            wheel_step(4, 4)
++            if k == round(0.45/dt):
++                first = np.array(robot.get_root_transforms()[0], copy=True)
++        last = np.array(robot.get_root_transforms()[0], copy=True)
++        duration = (round(0.9/dt)-round(0.45/dt))*dt
++        forward = float(np.linalg.norm(last[:2]-first[:2]))/duration/4
++        phi = wrap(math.atan2(last[1]-first[1], last[0]-first[0])-yaw(last[3:]))
++        for _ in range(round(0.6/dt)):
++            wheel_step()
++        for k in range(round(0.9/dt)):
++            wheel_step(-4, 4)
++            if k == round(0.45/dt):
++                first_yaw = yaw(robot.get_root_transforms()[0, 3:])
++        turn = wrap(yaw(robot.get_root_transforms()[0, 3:])-first_yaw)/duration/4
++        if forward < 0.01 or abs(turn) < 0.01:
++            raise RuntimeError("Real wheel calibration failed")
++        calibration = {"forward_m_per_s_per_rad_s": forward, "turn_rad_s_per_rad_s": turn,
++                       "travel_heading_in_robot_frame_rad": phi}
++        robot.set_root_transforms(initial_root, index)
++        robot.set_root_velocities(np.zeros((1,6), np.float32), index)
++        robot.set_dof_positions(initial_joints, index)
++        robot.set_dof_velocities(np.zeros((1,count), np.float32), index)
++        for _ in range(12):
++            wheel_step()
++        pose = robot.get_root_transforms()[0]
++        if np.linalg.norm(pose[:2]-initial_root[0,:2]) > 0.05 or abs(wrap(yaw(pose[3:])-yaw(initial_root[0,3:]))) > 0.05:
++            raise RuntimeError("Robot did not reset to its episode spawn after calibration")
++        elapsed = 0.0
++        moving = False
++        recorder = NativeContactRecorder(out/"physx_contacts.jsonl", robot_path, floors,
++                                         lambda: {"t": elapsed, "moving": moving})
++
++        def human_targets(at, reset=False):
++            s = min(at/control_dt, len(H)-1.000001)
++            i, u = int(s), s-int(s)
++            xy = (1-u)*H[i]+u*H[i+1]
++            poses = np.zeros((len(H[0]),7), np.float32)
++            poses[:,:2], poses[:,2], poses[:,6] = xy, height/2, 1
++            if reset:
++                humans.set_transforms(poses, human_indices)
++            humans.set_kinematic_targets(poses, human_indices)
++
++        # Place initial poses without sweeping capsules upward from their
++        # construction position below the floor. Later updates remain targets.
++        human_targets(0, reset=True)
++        wheel_step()
++        start_time = simulation.current_time
++        conn = socket.create_connection(("127.0.0.1", args.port), timeout=30)
++        conn.settimeout(180)
++        high_rate = []
++        max_tilt, min_z = 0.0, math.inf
++        with conn.makefile("rwb") as stream:
++            send(stream, {"type": "ready", "token": args.token, "isaac_version": importlib.metadata.version("isaacsim"),
++                          "calibration": calibration, "contact_bodies": contact_bodies, "floor_paths": floors})
++            step = 0
++            while True:
++                elapsed = step*control_dt
++                pose = np.asarray(robot.get_root_transforms()[0], float)
++                velocity = np.asarray(robot.get_root_velocities()[0], float)
++                body_yaw = yaw(pose[3:])
++                heading = body_yaw+phi
++                v = float(velocity[0]*math.cos(heading)+velocity[1]*math.sin(heading))
++                w = float(velocity[5])
++                moving = abs(v)>0.05 or abs(w)>0.2
++                tilt = math.degrees(math.acos(float(np.clip(1-2*(pose[3]**2+pose[4]**2),-1,1))))
++                max_tilt, min_z = max(max_tilt,tilt), min(min_z,float(pose[2]))
++                failure = tilt>20 or pose[2]<-0.1
++                send(stream, {"type": "observation", "t": elapsed, "physics_time": simulation.current_time-start_time,
++                              "robot": [float(pose[0]),float(pose[1]),body_yaw,v,w],
++                              "humans": np.asarray(humans.get_transforms()[:,:2],float).tolist(), "physics_failure": bool(failure)})
++                command = receive(stream)
++                if command.get("type")!="command":
++                    raise RuntimeError("Invalid controller response")
++                if command["done"]:
++                    summary = {**recorder.summary(), "max_tilt_deg": max_tilt, "min_z_m": min_z,
++                               "physics_steps": len(high_rate), "physics_dt": dt,
++                               "contact_bodies": contact_bodies, "floor_paths": floors}
++                    (out/"physics_summary.json").write_text(json.dumps(summary,indent=2),encoding="utf-8")
++                    np.savez_compressed(out/"physics_trace.npz", robot=np.asarray(high_rate,float))
++                    send(stream,{"type":"finished","physics":summary})
++                    break
++                wl = float(command["v"])/forward-float(command["w"])/turn
++                wr = float(command["v"])/forward+float(command["w"])/turn
++                for j in range(substeps):
++                    elapsed = step*control_dt+(j+1)*dt
++                    human_targets(elapsed)
++                    before = np.asarray(robot.get_root_velocities()[0],float)
++                    moving = np.linalg.norm(before[:2])>0.05 or abs(before[5])>0.2
++                    wheel_step(wl,wr)
++                    measured = np.asarray(robot.get_root_transforms()[0],float)
++                    high_rate.append([elapsed,*measured.tolist()])
++                step += 1
++    except Exception:
++        details = traceback.format_exc()
++        (out/"native_error.txt").write_text(details,encoding="utf-8")
++        if conn is not None:
++            try:
++                from worldc.e3.wire import send
++                with conn.makefile("rwb") as stream:
++                    send(stream,{"type":"error","error":details[-3000:]})
++            except Exception:
++                pass
++        raise
++    finally:
++        if recorder is not None:
++            recorder.close()
++        if conn is not None:
++            conn.close()
++        app.close()
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/worldc/render/e3_isaac_probe.py b/src/worldc/render/e3_isaac_probe.py
+new file mode 100644
+index 0000000..e92d24f
+--- /dev/null
++++ b/src/worldc/render/e3_isaac_probe.py
+@@ -0,0 +1,87 @@
++"""A required native contact-delivery diagnostic, not a navigation trial."""
++import importlib.metadata
++import json
++from pathlib import Path
++import sys
++import traceback
++
++
++def main():
++    out = Path(sys.argv[1])
++    out.mkdir(parents=True, exist_ok=True)
++    from worldc.render.e3_boot import start_app, physics_step
++    app = start_app()
++    recorder = None
++    result = {"passed": False, "navigation_trials": 0}
++    try:
++        import numpy as np
++        import omni.usd
++        import omni.physics.tensors as tensors
++        from pxr import Gf, UsdGeom, UsdPhysics, PhysxSchema
++        from isaacsim.core.api import SimulationContext
++        from worldc.e3.contact import NativeContactRecorder
++
++        context = omni.usd.get_context()
++        context.new_stage()
++        stage = context.get_stage()
++        def box(path, position, size, dynamic=False):
++            cube = UsdGeom.Cube.Define(stage, path)
++            cube.CreateSizeAttr(1.0)
++            transform = UsdGeom.Xformable(cube.GetPrim())
++            transform.AddTranslateOp().Set(Gf.Vec3d(*position))
++            transform.AddScaleOp().Set(Gf.Vec3f(*size))
++            UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
++            if dynamic:
++                UsdPhysics.RigidBodyAPI.Apply(cube.GetPrim())
++                mass = UsdPhysics.MassAPI.Apply(cube.GetPrim())
++                mass.CreateMassAttr(80)
++                PhysxSchema.PhysxContactReportAPI.Apply(cube.GetPrim()).CreateThresholdAttr(0)
++            return cube
++        box("/World/Floor", (0,0,-0.1), (20,10,0.2))
++        box("/World/Wall", (2,0,1), (0.2,4,2))
++        box("/World/Robot", (0,0,0.3), (0.5,0.5,0.5), True)
++        sim = SimulationContext(physics_dt=1/120, rendering_dt=1/60, stage_units_in_meters=1.0, backend="numpy")
++        sim.initialize_physics()
++        sim.play()
++        physics_step(sim, 1/120)
++        simulation_view = tensors.create_simulation_view("numpy")
++        view = simulation_view.create_rigid_body_view("/World/Robot")
++        t = 0.0
++        moving = False
++        recorder = NativeContactRecorder(out/"contacts.jsonl", "/World/Robot", ["/World/Floor"], lambda:{"t":t,"moving":moving})
++        stages = []
++        def drive(name, speed, seconds):
++            nonlocal t, moving
++            for _ in range(round(seconds*120)):
++                moving = abs(speed)>0.05
++                view.set_velocities(np.array([[speed,0,0,0,0,0]],np.float32), np.array([0],np.int32))
++                physics_step(sim, 1/120)
++                t += 1/120
++            x = float(view.get_transforms()[0,0])
++            stages.append({"name":name,"robot_x":x,"wall_gap_m":1.9-(x+0.25), **recorder.summary()})
++        drive("floor_only",0,0.5)
++        floor_control = recorder.summary()["physx_contact_episodes"] == 0
++        drive("first_hold",1,3)
++        drive("first_retreat",-1,2)
++        drive("second_hold",1,4)
++        drive("second_retreat",-1,2)
++        summary = recorder.summary()
++        near = all(abs(s["wall_gap_m"])<0.06 for s in stages if s["name"].endswith("hold"))
++        away = all(s["wall_gap_m"]>0.3 for s in stages if s["name"].endswith("retreat"))
++        result.update(isaac_version=importlib.metadata.version("isaacsim"), contacts=summary, stages=stages,
++                      floor_control=floor_control, near=near, away=away,
++                      passed=bool(floor_control and near and away and summary["physx_floor_reports"]>0
++                                  and summary["physx_contact_episodes"]==2 and not summary["contact_callback_errors"]))
++    except Exception:
++        result["error"] = traceback.format_exc()
++    finally:
++        if recorder is not None:
++            recorder.close()
++        (out/"probe.json").write_text(json.dumps(result,indent=2),encoding="utf-8")
++        app.close()
++    if not result["passed"]:
++        raise SystemExit(1)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/src/worldc/render/e3_isaac.kit b/src/worldc/render/e3_isaac.kit
+new file mode 100644
+index 0000000..6937763
+--- /dev/null
++++ b/src/worldc/render/e3_isaac.kit
+@@ -0,0 +1,17 @@
++[package]
++title = "worldc E3 PhysX experiment"
++version = "1.0.0"
++
++[dependencies]
++"omni.usd" = {}
++"omni.physx" = {}
++"omni.physics.tensors" = {}
++"isaacsim.core.api" = {}
++"isaacsim.core.prims" = {}
++"omni.kit.renderer.core" = {}
++"omni.hydra.rtx" = {}
++
++[settings]
++app.settings.persistent = false
++app.asyncRendering = false
++renderer.multiGpu.enabled = false
+diff --git a/scripts/e3_suite.py b/scripts/e3_suite.py
+new file mode 100644
+index 0000000..38ce89e
+--- /dev/null
++++ b/scripts/e3_suite.py
+@@ -0,0 +1,194 @@
++"""Run a frozen E3 scene selection, verify complete paired trials, then analyze.
++
++    uv run python scripts/e3_suite.py results/e3_scene_selection/selection.json --out out/e3_suite
++
++The selection is an input, never replaced by a scene that happens to run. Failed
++scenes remain in suite.json. Analysis runs only when every selected scene passes.
++"""
++from __future__ import annotations
++
++import argparse
++import csv
++import hashlib
++from importlib import metadata
++import json
++import re
++import subprocess
++import sys
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++TIERS = {"easy": ("base", 1), "medium": ("base", 3), "hard": ("hard", 6)}
++POLICIES = ("blind", "fields", "aware")
++
++
++def policy_preflight() -> dict:
++    sys.path.insert(0, str(ROOT / "src"))
++    from worldc.e3.sim import policy_provenance
++
++    provenance = policy_provenance()
++    if (not provenance["e3_policies_commit"] or not provenance["code_commit"]
++            or provenance["policies_changed_since_tag"]):
++        raise ValueError("Frozen policy provenance is unavailable or changed. Restore the documented policy tag "
++                         "and matching policy files before running the suite.")
++    return provenance
++
++
++def load_selection(path: Path, project: Path = ROOT) -> list[dict]:
++    selection = json.loads(path.read_text(encoding="utf-8"))
++    chosen = selection.get("chosen", [])
++    if not chosen or len(chosen) != selection.get("n", len(chosen)):
++        raise ValueError("selection must contain the requested number of scenes")
++    seen = set()
++    rows = []
++    for source in chosen:
++        label = source.get("prompt", "")
++        if not re.fullmatch(r"P[0-9]+", label) or label in seen:
++            raise ValueError(f"invalid or duplicate prompt label: {label!r}")
++        seen.add(label)
++        scene = Path(source["scene"])
++        if not scene.is_absolute():
++            scene = project / scene
++        scene = scene.resolve()
++        if not (scene / "resolved_spec.json").is_file():
++            raise ValueError(f"{label}: missing resolved_spec.json in {scene}")
++        rows.append({**source, "scene": str(scene),
++                     "resolved_spec_sha256": hashlib.sha256((scene / "resolved_spec.json").read_bytes()).hexdigest()})
++    return rows
++
++
++def verify_trials(path: Path, scene: str, seeds: int) -> dict:
++    """Reject missing/duplicate cells, mixed provenance, or invalid measurements."""
++    with path.open(newline="", encoding="utf-8") as handle:
++        rows = list(csv.DictReader(handle))
++    expected = {(t, str(s), p) for t in TIERS for s in range(seeds) for p in POLICIES}
++    seen = set()
++    provenance = set()
++    for row in rows:
++        key = (row["tier"], row["seed"], row["policy"])
++        if key in seen or key not in expected or row["scene"] != scene:
++            raise ValueError(f"{scene}: duplicate or unexpected trial {key}")
++        seen.add(key)
++        variant, workers = TIERS[row["tier"]]
++        if row["variant"] != variant or int(row["workers"]) != workers:
++            raise ValueError(f"{scene}: wrong variant or worker count in {key}")
++        if row["policies_at_tag"] != "True" or not row["e3_policies_commit"] or not row["code_commit"]:
++            raise ValueError(f"{scene}: frozen policy provenance is not verified")
++        provenance.add(tuple(row[k] for k in ("e3_policies", "e3_policies_commit", "code_commit")))
++        moving, stationary, total = (int(row[k]) for k in
++                                     ("collisions_robot_moving", "collisions_robot_stationary", "collisions"))
++        if min(moving, stationary, total) < 0 or moving + stationary != total:
++            raise ValueError(f"{scene}: inconsistent collision split in {key}")
++        reached, goals = int(row["goals_reached"]), int(row["n_goals"])
++        if goals < 1 or not 0 <= reached <= goals:
++            raise ValueError(f"{scene}: invalid goal counts in {key}")
++        success = row["success"] == "True"
++        complete = row["end"] == "done" and reached == goals
++        if success != (complete and moving == 0) or success != (row["outcome"] == "success"):
++            raise ValueError(f"{scene}: inconsistent success definition in {key}")
++    if seen != expected:
++        raise ValueError(f"{scene}: missing {len(expected - seen)} paired trials")
++    if len(provenance) != 1:
++        raise ValueError(f"{scene}: mixed code or policy versions")
++    replay = json.loads(path.with_name("replay.json").read_text(encoding="utf-8"))
++    if (replay.get("identical") is not True or not replay.get("digest")
++            or replay["digest"] != replay.get("replay_digest") or replay.get("tier") != "hard"
++            or replay.get("policy") != "blind" or replay.get("seed") not in range(seeds)):
++        raise ValueError(f"{scene}: deterministic replay did not pass")
++    tag, policy_commit, code_commit = provenance.pop()
++    return {"trials": len(rows), "e3_policies": tag, "e3_policies_commit": policy_commit, "code_commit": code_commit,
++            "replay": replay}
++
++
++def run_suite(selection: Path, out: Path, seeds: int, boot: int, no_gif: bool = True) -> int:
++    if seeds < 1 or boot < 1:
++        raise ValueError("seeds and bootstrap replicates must be positive")
++    chosen = load_selection(selection)
++    if out.exists() and any(out.iterdir()):
++        raise ValueError("output directory must be empty; choose a new path to preserve prior runs")
++    provenance = policy_preflight()
++    out.mkdir(parents=True, exist_ok=True)
++    versions = {}
++    for package in ("numpy", "scipy", "usd-core", "pydantic", "pillow"):
++        try:
++            versions[package] = metadata.version(package)
++        except metadata.PackageNotFoundError:
++            versions[package] = None
++    manifest = {"selection": str(selection.resolve()), "selected": chosen, "seeds": seeds,
++                "policy_preflight": provenance,
++                "implementation_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
++                                          for path in [ROOT / "scripts/e3_suite.py", ROOT / "scripts/e3_one_scene.py",
++                                                       ROOT / "scripts/e3_analysis.py", *sorted((ROOT / "src/worldc/e3").glob("*.py"))]},
++                "environment": {"python": sys.version, "platform": sys.platform, "packages": versions},
++                "planned_scenes": len(chosen), "planned_trials": len(chosen) * seeds * 9,
++                "completed_scenes": 0, "verified_trials": 0, "scenes": [], "analysis": "not_run", "status": "running"}
++    def save():
++        (out / "suite.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
++    save()
++    trials = []
++    provenances = set()
++    for item in chosen:
++        name = item["prompt"]
++        scene_out = out / name
++        scene_out.mkdir()
++        command = [sys.executable, str(ROOT / "scripts/e3_one_scene.py"), item["scene"],
++                   "--name", name, "--seeds", str(seeds), "--out", str(scene_out)]
++        if no_gif:
++            command.append("--no-gif")
++        result = {"prompt": name, "source_scene": item["scene"], "command": command, "status": "failed"}
++        print(f"Running {name}: {seeds * 9} planned trials", flush=True)
++        try:
++            with (scene_out / "run.log").open("w", encoding="utf-8") as log:
++                process = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
++            if process.returncode:
++                raise ValueError(f"scene runner exited {process.returncode}; see {scene_out / 'run.log'}")
++            trial_path = scene_out / "trials.csv"
++            verified = verify_trials(trial_path, name, seeds)
++            if any(verified[k] != provenance[k] for k in ("e3_policies", "e3_policies_commit", "code_commit")):
++                raise ValueError(f"{name}: code or policy provenance changed after suite preflight")
++            result.update(status="complete", **verified)
++            provenances.add(tuple(verified[k] for k in ("e3_policies", "e3_policies_commit", "code_commit")))
++            trials.append(trial_path)
++            manifest["completed_scenes"] += 1
++            manifest["verified_trials"] += verified["trials"]
++        except (OSError, ValueError, KeyError) as error:
++            result["error"] = str(error)
++            print(f"FAILED {name}: {error}", flush=True)
++        manifest["scenes"].append(result)
++        save()
++    if manifest["completed_scenes"] != len(chosen) or len(provenances) != 1:
++        manifest["status"] = "failed"
++        manifest["error"] = "Selected scenes failed validation or code/policy versions differ; analysis was not run."
++        save()
++        return 1
++    command = [sys.executable, str(ROOT / "scripts/e3_analysis.py"), *map(str, trials),
++               "--out", str(out / "analysis"), "--boot", str(boot)]
++    manifest["analysis_command"] = command
++    try:
++        with (out / "analysis.log").open("w", encoding="utf-8") as log:
++            process = subprocess.run(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
++        manifest["analysis"] = "complete" if process.returncode == 0 else "failed"
++    except OSError as error:
++        manifest["analysis"] = "failed"
++        manifest["error"] = str(error)
++    manifest["status"] = manifest["analysis"]
++    save()
++    return 0 if manifest["status"] == "complete" else 1
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("selection", type=Path)
++    parser.add_argument("--out", type=Path, required=True)
++    parser.add_argument("--seeds", type=int, default=10)
++    parser.add_argument("--boot", type=int, default=2000)
++    parser.add_argument("--gif", action="store_true", help="also generate diagnostic animations")
++    args = parser.parse_args()
++    try:
++        return run_suite(args.selection.resolve(), args.out.resolve(), args.seeds, args.boot, not args.gif)
++    except (OSError, ValueError, KeyError) as error:
++        parser.exit(1, f"E3 suite: {error}\n")
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/e3_isaac_suite.py b/scripts/e3_isaac_suite.py
+new file mode 100644
+index 0000000..8c4d1c1
+--- /dev/null
++++ b/scripts/e3_isaac_suite.py
+@@ -0,0 +1,41 @@
++"""Prepare and run all selected E3 trials in Isaac Sim physics.
++
++    uv run python scripts/e3_isaac_suite.py prepare selection.json --out out/e3_isaac --seeds 10
++    uv run python scripts/e3_isaac_suite.py run out/e3_isaac --isaac-python /path/to/isaacsim/python.sh
++"""
++import argparse
++from pathlib import Path
++import sys
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"src"))
++from worldc.e3.isaac_experiment import prepare, execute
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    modes = parser.add_subparsers(dest="mode", required=True)
++    prep = modes.add_parser("prepare")
++    prep.add_argument("selection", type=Path)
++    prep.add_argument("--out", type=Path, required=True)
++    prep.add_argument("--seeds", type=int, default=10)
++    prep.add_argument("--transform-seed",type=int,default=0,help="fixed geometry seed, separate from trial seeds; recorded in manifest")
++    run = modes.add_parser("run")
++    run.add_argument("out", type=Path)
++    run.add_argument("--isaac-python", type=Path, required=True)
++    run.add_argument("--resume",action="store_true",help="resume an interrupted campaign after verifying completed evidence and unchanged code")
++    run.add_argument("--allow-isaac-4.5", dest="allow_isaac_45", action="store_true", help="explicit older-engine backend; never changes the E1 runtime gate")
++    args = parser.parse_args()
++    try:
++        if args.mode == "prepare":
++            result = prepare(args.selection.resolve(), args.out.resolve(), args.seeds,args.transform_seed)
++            print(f"{result['status']}: {len(result['trials'])}/{result['planned_trials']} trial specifications")
++            return 0 if result["status"] == "prepared" else 1
++        result = execute(args.out.resolve(), args.isaac_python.resolve(), args.allow_isaac_45, args.resume)
++        print(f"{result['status']}: {result.get('completed_trials',0)}/{result['planned_trials']} physical trials")
++        return 0 if result["status"] == "complete" else 1
++    except Exception as error:
++        parser.exit(1,f"E3 Isaac: {type(error).__name__}: {error}\n")
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/scripts/e3_isaac_analysis.py b/scripts/e3_isaac_analysis.py
+new file mode 100644
+index 0000000..171630c
+--- /dev/null
++++ b/scripts/e3_isaac_analysis.py
+@@ -0,0 +1,41 @@
++"""Analyze an unmixed Isaac E3 result set, including real PhysX contact metrics."""
++import sys
++from pathlib import Path
++import importlib.util
++
++import numpy as np
++
++spec = importlib.util.spec_from_file_location("e3_reference_analysis",Path(__file__).with_name("e3_analysis.py"))
++analysis = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(analysis)
++original_load = analysis.load
++
++
++def load(paths):
++    rows = original_load(paths)
++    if not rows or {r.get("backend") for r in rows}!={"isaac-physx-e3-v1"}:
++        raise ValueError("Isaac analysis requires only measured Isaac trials; do not mix 2D results")
++    if len({r["isaac_version"] for r in rows})!=1:
++        raise ValueError("Do not pool different Isaac engine versions")
++    return rows
++
++
++analysis.load = load
++analysis.METRICS.update({
++    "physx_contacts": (lambda r:r["physx_contact_episodes"],np.nanmean),
++    "physx_moving_contacts": (lambda r:r["physx_moving_contact_episodes"],np.nanmean),
++    "physx_success": (lambda r:float(r["physx_success"]),np.nanmean),
++    "physx_no_contact_success": (lambda r:float(r["physx_contact_free_success"]),np.nanmean),
++    "physics_failure": (lambda r:float(r["end"]=="physics_failure"),np.nanmean),
++})
++analysis.COLUMNS[:0] = [("PhysX moving episodes/trial","physx_moving_contacts",2,False),
++                      ("PhysX all episodes/trial","physx_contacts",2,False),
++                      ("PhysX success (%)","physx_success",0,True),
++                      ("PhysX no-contact success (%)","physx_no_contact_success",0,True),
++                      ("Physics failure (%)","physics_failure",0,True)]
++analysis.COLUMNS[:] = [("E3 geometric "+label if label in ("Moving coll./trial","All coll./trial","Success (%)","No-contact success (%)") else label,
++                       metric,digits,pct) for label,metric,digits,pct in analysis.COLUMNS]
++
++
++if __name__=="__main__":
++    analysis.main()
+diff --git a/tests/test_e3_contact.py b/tests/test_e3_contact.py
+new file mode 100644
+index 0000000..f5523ce
+--- /dev/null
++++ b/tests/test_e3_contact.py
+@@ -0,0 +1,44 @@
++import pytest
++from worldc.e3.contact import ContactEpisodes
++
++
++def test_contacts_need_impulse_and_recontact_counts_once():
++    count = ContactEpisodes("/Robot", ["/Floor"])
++    pair = ["/Robot/wheel", "/Human"]
++    assert not count.observe("found", pair, 0.0, True)["new_physical_episode"]
++    assert count.observe("persist", pair, 0.01, True)["new_physical_episode"]
++    assert not count.observe("persist", pair, 1, False)["new_physical_episode"]
++    count.observe("lost", pair, 0, False)
++    assert count.observe("found", pair, 0.1, False)["new_physical_episode"]
++    assert count.summary()["physx_contact_episodes"] == 2
++    assert count.summary()["physx_moving_contact_episodes"] == 1
++    assert count.summary()["physx_stationary_contact_episodes"] == 1
++
++
++def test_floor_and_similar_prefix_are_not_hazard_contacts():
++    count = ContactEpisodes("/Robot", ["/Floor"])
++    assert count.observe("found", ["/Robot/wheel", "/Floor/mesh"], 1, True) is None
++    assert count.observe("found", ["/RobotOther", "/Human"], 1, True) is None
++    assert count.summary()["physx_floor_reports"] == 1
++    assert count.summary()["physx_contact_episodes"] == 0
++def test_native_callback_serializes_numpy_motion_state():
++    import io
++    import json
++    from types import SimpleNamespace
++    import numpy as np
++    from worldc.e3.contact import ContactEpisodes, NativeContactRecorder
++
++    recorder = NativeContactRecorder.__new__(NativeContactRecorder)
++    recorder.counter = ContactEpisodes('/Robot', ['/Floor'])
++    recorder.observation = lambda: {'t': np.float64(0.05), 'moving': np.bool_(True)}
++    recorder.errors, recorder.stream = [], io.StringIO()
++    recorder.decode, recorder.names = str, {1: 'found'}
++    header = SimpleNamespace(collider0='/Robot/wheel', collider1='/Human', contact_data_offset=0, num_contact_data=1, type=1)
++    recorder.callback([header], [SimpleNamespace(impulse=(0.1, 0, 0))])
++    assert not recorder.errors
++    assert json.loads(recorder.stream.getvalue())['moving'] is True
++    lost = SimpleNamespace(collider0='/Robot/wheel', collider1='/Human', contact_data_offset=0, num_contact_data=0, type=2)
++    recorder.names[2] = 'lost'
++    recorder.callback([lost,header], [SimpleNamespace(impulse=(0.1,0,0))])
++    assert recorder.summary()['physx_contact_episodes']==1
++
+diff --git a/tests/test_e3_feedback.py b/tests/test_e3_feedback.py
+new file mode 100644
+index 0000000..ef2511b
+--- /dev/null
++++ b/tests/test_e3_feedback.py
+@@ -0,0 +1,47 @@
++"""Feedback port must reproduce frozen policies when its plant is the ideal unicycle."""
++import math
++import numpy as np
++import pytest
++
++from worldc.e3 import sim as S
++from worldc.e3.feedback import FeedbackTrial
++from worldc.e3.world import World
++from test_e3 import room
++
++
++def ideal_feedback(world, humans, policy, timeout=None):
++    trial = FeedbackTrial(world, policy, humans.shape[1], timeout=timeout)
++    x, y, yaw = world.spawn
++    th, v, w = S.wrap(yaw + world.phi0), 0.0, 0.0
++    for k in range(len(humans)):
++        command = trial.observe(k*S.DT, x, y, th-world.phi0, v, w, humans[k])
++        if command is None:
++            return trial.result()
++        v, w = command
++        th = S.wrap(th+w*S.DT)
++        x, y = x+v*math.cos(th)*S.DT, y+v*math.sin(th)*S.DT
++    raise AssertionError("Test human track too short")
++
++
++@pytest.mark.parametrize("policy", S.POLICIES)
++@pytest.mark.parametrize("xy", [(0,-0.6),(0,-1.5),(-1.9,0)])
++def test_feedback_matches_frozen_reference(room, policy, xy):
++    humans = np.tile(np.array([[*xy]],float),(4000,1,1))
++    reference = S.run_trial(room, humans, policy)
++    feedback = ideal_feedback(room, humans, policy)
++    assert feedback == reference
++
++
++@pytest.mark.parametrize("policy", S.POLICIES)
++def test_feedback_align_and_rear_approach_match(room, policy):
++    world = World("turn",room.xr,room.yr,room.res,{},[],(-3,0,np.pi),room.robot,room.robot_r,
++                  [{"id":"g","pose":(3,0,np.pi)}],room.raw_pois)
++    humans = np.zeros((4000,1,2))
++    humans[:,0,0] = np.minimum(-3.9+1.8*S.DT*np.arange(len(humans)),3.9)
++    assert ideal_feedback(world,humans,policy) == S.run_trial(world,humans,policy)
++
++
++def test_feedback_rejects_unsynchronized_observations(room):
++    trial = FeedbackTrial(room,"blind",1)
++    with pytest.raises(ValueError,match="clock"):
++        trial.observe(1.0,-3,0,0,0,0,[[0,1]])
+diff --git a/tests/test_e3_isaac_experiment.py b/tests/test_e3_isaac_experiment.py
+new file mode 100644
+index 0000000..08333b7
+--- /dev/null
++++ b/tests/test_e3_isaac_experiment.py
+@@ -0,0 +1,165 @@
++import io
++import json
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from worldc.e3 import isaac_experiment as E
++from worldc.e3 import wire
++from test_e3 import room
++
++
++@pytest.fixture
++def prepared(room,tmp_path,monkeypatch):
++    from contextlib import nullcontext
++    monkeypatch.setattr(E,"campaign_lock",nullcontext)
++    source = tmp_path/"source"
++    source.mkdir()
++    chosen = [{"prompt":"P18","scene":str(source)}]
++    provenance = {"e3_policies":"e3-policies-v1","e3_policies_commit":"policy","code_commit":"code"}
++    monkeypatch.setattr(E,"script",lambda name:SimpleNamespace(load_selection=lambda path:chosen,policy_preflight=lambda:provenance))
++    def variants(source,out,seed=0):
++        for variant in ("base","hard"):
++            scene = out/variant/"scene"
++            scene.mkdir(parents=True)
++            (scene/"scene.usd").write_text("#usda 1.0")
++            (scene/"scene_graph.json").write_text("{}")
++        return {"base":{"ok":True},"hard":{"ok":True}}
++    monkeypatch.setattr(E,"make_variants",variants)
++    monkeypatch.setattr(E,"load_world",lambda path:room)
++    monkeypatch.setitem(E.robots.DIFF_DRIVE,"test",{"left":["left"],"right":["right"]})
++    return tmp_path/"selection.json",tmp_path/"experiment"
++
++
++def test_resume_reuses_only_verified_completed_trials(prepared,monkeypatch):
++    selection,out=prepared
++    E.prepare(selection,out,seeds=1)
++    monkeypatch.setattr(E,"check_runtime",lambda *args:"4.5.0.0")
++    monkeypatch.setattr(E,"contact_probe",lambda *args:{"passed":True})
++    monkeypatch.setattr(E,"replay_check",lambda *args:{"passed":True})
++    monkeypatch.setattr(E.subprocess,"run",lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout="",stderr=""))
++    calls=[]
++    def launch(trial,*args):
++        calls.append(trial['id'])
++        if len(calls)==2:
++            raise KeyboardInterrupt()
++        destination=Path(trial['out'])
++        result={'end':'done','isaac_version':'4.5.0.0','backend':'isaac-physx-e3-v1','policy':trial['policy']}
++        E.write_json(destination/'result.json',result)
++        for name in ('native_setup.json','physics_summary.json','physics_trace.npz','physx_contacts.jsonl'):
++            (destination/name).write_bytes(b'verified-test-evidence')
++        return result
++    monkeypatch.setattr(E,'launch_trial',launch)
++    with pytest.raises(KeyboardInterrupt):
++        E.execute(out,Path('unused'),True)
++    state=json.loads((out/'experiment.json').read_text())
++    assert state['trials'][0]['status']=='complete'
++    assert E.execute(out,Path('unused'),True,resume=True)['status']=='complete'
++    assert calls.count(calls[0])==1
++
++
++def test_physics_step_uses_explicit_dt_and_checks_callback(monkeypatch):
++    import sys
++    from worldc.render.e3_boot import physics_step
++    state=SimpleNamespace(current_time=0.0)
++    expected=1/120
++    def simulate(dt,at):
++        assert dt==expected and at==state.current_time
++        state.current_time+=dt
++    physics=SimpleNamespace(simulate=simulate,fetch_results=lambda:None)
++    physx=SimpleNamespace(get_physx_simulation_interface=lambda:physics)
++    monkeypatch.setitem(sys.modules,'omni',SimpleNamespace(physx=physx))
++    monkeypatch.setitem(sys.modules,'omni.physx',physx)
++    physics_step(state,expected)
++    physics.simulate=lambda dt,at:None
++    with pytest.raises(RuntimeError,match='callback time step mismatch'):
++        physics_step(state,expected)
++
++
++def test_cli_accepts_explicit_45_flag(monkeypatch,tmp_path):
++    import sys
++    cli=E.script('e3_isaac_suite')
++    received=[]
++    monkeypatch.setattr(cli,'execute',lambda *args:received.append(args) or {'status':'complete','completed_trials':9,'planned_trials':9})
++    monkeypatch.setattr(sys,'argv',['e3_isaac_suite.py','run',str(tmp_path),'--isaac-python',str(tmp_path/'python.exe'),'--allow-isaac-4.5','--resume'])
++    assert cli.main()==0
++    assert received[0][2:] == (True,True)
++
++
++def test_prepare_preserves_pairs_and_planned_count(prepared):
++    selection,out = prepared
++    manifest = E.prepare(selection,out,seeds=2)
++    assert manifest["status"]=="prepared" and len(manifest["trials"])==18
++    for tier in E.TIERS:
++        for seed in range(2):
++            rows=[r for r in manifest["trials"] if r["tier"]==tier and r["seed"]==seed]
++            assert len(rows)==3 and len({r["human_track_sha256"] for r in rows})==1
++            assert all(Path(r["out"],"trial.json").exists() for r in rows)
++
++
++def test_invalid_variants_are_not_silently_dropped(prepared,monkeypatch):
++    selection,out = prepared
++    monkeypatch.setattr(E,"make_variants",lambda *args,**kwargs:{"base":{"ok":False},"hard":{"ok":False}})
++    manifest=E.prepare(selection,out,seeds=1)
++    assert manifest["status"]=="preparation_failed"
++    assert manifest["planned_trials"]==9 and not manifest["trials"] and manifest["failures"]
++
++
++def test_custom_usd_filename_is_preserved_and_verified(prepared,monkeypatch):
++    selection,out=prepared
++    original=E.make_variants
++    def custom(source,destination,**kwargs):
++        result=original(source,destination,**kwargs)
++        for variant in ('base','hard'):
++            scene=destination/variant/'scene'
++            (scene/'scene.usd').rename(scene/'warehouse.usd')
++            E.write_json(scene/'scene_graph.json',{'usd':'warehouse.usd'})
++        return result
++    monkeypatch.setattr(E,'make_variants',custom)
++    manifest=E.prepare(selection,out,seeds=1)
++    assert manifest['status']=='prepared'
++    assert all(t['scene_usd']=='warehouse.usd' for t in manifest['trials'])
++    for trial in manifest['trials']:
++        E.verify_trial_inputs(trial)
++
++
++def test_runtime_and_probe_failures_prevent_navigation(prepared,monkeypatch):
++    selection,out=prepared
++    E.prepare(selection,out,seeds=1)
++    monkeypatch.setattr(E,"check_runtime",lambda *args:(_ for _ in ()).throw(ValueError("missing supported engine")))
++    monkeypatch.setattr(E,"launch_trial",lambda *args:pytest.fail("must not run without native gates"))
++    assert E.execute(out,Path("missing"))["status"]=="runtime_blocked"
++    monkeypatch.setattr(E,"check_runtime",lambda *args:"5.1.0")
++    monkeypatch.setattr(E,"contact_probe",lambda *args:(_ for _ in ()).throw(RuntimeError("no contacts")))
++    assert E.execute(out,Path("unused"))["status"]=="instrumentation_blocked"
++
++
++def test_older_runtime_needs_explicit_selection(tmp_path,monkeypatch):
++    python=tmp_path/"python.exe"
++    python.write_text("not executed")
++    monkeypatch.setattr(E,"runtime_version",lambda path:"4.5.0.0")
++    with pytest.raises(ValueError,match="older engine"):
++        E.check_runtime(python)
++    assert E.check_runtime(python,True)=="4.5.0.0"
++
++
++def test_wire_rejects_invalid_frames_and_nonfinite_values():
++    stream=io.BytesIO()
++    wire.send(stream,{"type":"observation","t":0.0})
++    stream.seek(0)
++    assert wire.receive(stream)["t"]==0.0
++    with pytest.raises(ValueError):
++        wire.send(io.BytesIO(),{"t":float("nan")})
++    with pytest.raises(ConnectionError):
++        wire.receive(io.BytesIO())
++    with pytest.raises(ValueError):
++        wire.receive(io.BytesIO(b'[]\n'))
++
++
++def test_physical_replay_tolerances_are_enforced():
++    first={"trajectory":[[0,0,0,0,0],[1,1,0,0,1]],"sim_s":1,"outcome":"success",
++           "goals_reached":1,"collisions_robot_moving":0,"physx_contact_episodes":0}
++    assert E.replay_check(first,first)["passed"]
++    changed={**first,"trajectory":[[0,0.1,0,0,0],[1,1.1,0,0,1]]}
++    assert not E.replay_check(first,changed)["passed"]
+diff --git a/tests/test_e3_reporting.py b/tests/test_e3_reporting.py
+new file mode 100644
+index 0000000..f888e1e
+--- /dev/null
++++ b/tests/test_e3_reporting.py
+@@ -0,0 +1,30 @@
++"""Derived paper metrics preserve the frozen simulator outcomes."""
++import importlib.util
++from pathlib import Path
++import unittest
++
++spec = importlib.util.spec_from_file_location("e3_analysis", Path(__file__).resolve().parents[1] / "scripts/e3_analysis.py")
++analysis = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(analysis)
++
++
++class ReportingTests(unittest.TestCase):
++    def test_stationary_contacts_do_not_become_contact_free_success(self):
++        row = {"success": True, "end": "done", "goals_reached": 6, "n_goals": 6, "collisions": 3,
++               "time_to_goal_s": 60, "timeout_s": 200}
++        self.assertEqual(analysis.METRICS["route_complete"][0](row), 1)
++        self.assertEqual(analysis.METRICS["collision_free_success"][0](row), 0)
++        self.assertEqual(analysis.METRICS["penalized_time"][0](row), 60)
++        row["collisions"] = 0
++        self.assertEqual(analysis.METRICS["collision_free_success"][0](row), 1)
++
++    def test_unfinished_time_is_penalized_and_route_is_incomplete(self):
++        row = {"success": False, "end": "frozen", "goals_reached": 2, "n_goals": 6, "collisions": 0,
++               "time_to_goal_s": None, "timeout_s": 200}
++        self.assertEqual(analysis.METRICS["route_complete"][0](row), 0)
++        self.assertEqual(analysis.METRICS["collision_free_success"][0](row), 0)
++        self.assertEqual(analysis.METRICS["penalized_time"][0](row), 200)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_e3_suite.py b/tests/test_e3_suite.py
+new file mode 100644
+index 0000000..0e85795
+--- /dev/null
++++ b/tests/test_e3_suite.py
+@@ -0,0 +1,144 @@
++"""Standalone orchestration checks: python tests/test_e3_suite.py (no Isaac required)."""
++from __future__ import annotations
++
++import csv
++import importlib.util
++import json
++from pathlib import Path
++import tempfile
++import unittest
++from unittest.mock import patch
++from types import SimpleNamespace
++
++ROOT = Path(__file__).resolve().parents[1]
++spec = importlib.util.spec_from_file_location("e3_suite", ROOT / "scripts/e3_suite.py")
++suite = importlib.util.module_from_spec(spec)
++spec.loader.exec_module(suite)
++
++
++def write_trials(out, name="P18", seeds=1):
++    out.mkdir(parents=True, exist_ok=True)
++    rows = []
++    for tier, (variant, workers) in suite.TIERS.items():
++        for seed in range(seeds):
++            for policy in suite.POLICIES:
++                rows.append({"scene": name, "tier": tier, "variant": variant, "workers": workers, "seed": seed,
++                             "policy": policy, "policies_at_tag": True, "e3_policies": "e3-policies-v1",
++                             "e3_policies_commit": "policy123", "code_commit": "code123", "collisions_robot_moving": 0,
++                             "collisions_robot_stationary": 1, "collisions": 1, "goals_reached": 2, "n_goals": 2,
++                             "end": "done", "success": True, "outcome": "success"})
++    save_rows(out / "trials.csv", rows)
++    (out / "replay.json").write_text(json.dumps({"identical": True, "digest": "abc", "replay_digest": "abc",
++                                               "tier": "hard", "policy": "blind", "seed": 0}))
++    return rows
++
++
++def save_rows(path, rows):
++    with path.open("w", newline="") as handle:
++        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
++        writer.writeheader()
++        writer.writerows(rows)
++
++
++class SuiteTests(unittest.TestCase):
++    def setUp(self):
++        self.preflight = patch.object(suite, "policy_preflight", return_value={"e3_policies": "e3-policies-v1",
++                                     "e3_policies_commit": "policy123", "code_commit": "code123"})
++        self.preflight.start()
++        self.tmp = tempfile.TemporaryDirectory()
++        self.root = Path(self.tmp.name)
++        self.scene = self.root / "scene"
++        self.scene.mkdir()
++        (self.scene / "resolved_spec.json").write_text("{}")
++        self.selection = self.root / "selection.json"
++        self.selection.write_text(json.dumps({"n": 1, "chosen": [{"prompt": "P18", "scene": str(self.scene)}]}))
++
++    def tearDown(self):
++        self.preflight.stop()
++        self.tmp.cleanup()
++
++    def test_selection_rejects_duplicate_labels_and_missing_scenes(self):
++        row = {"prompt": "P18", "scene": str(self.scene)}
++        self.selection.write_text(json.dumps({"n": 2, "chosen": [row, row]}))
++        with self.assertRaisesRegex(ValueError, "duplicate"):
++            suite.load_selection(self.selection)
++        self.selection.write_text(json.dumps({"chosen": [{"prompt": "P19", "scene": "missing"}]}))
++        with self.assertRaisesRegex(ValueError, "missing resolved"):
++            suite.load_selection(self.selection, self.root)
++
++    def test_complete_grid_and_stationary_contact_success_are_valid(self):
++        write_trials(self.root)
++        self.assertEqual(suite.verify_trials(self.root / "trials.csv", "P18", 1)["trials"], 9)
++
++    def test_rejects_missing_duplicate_and_mixed_version_trials(self):
++        path = self.root / "trials.csv"
++        rows = write_trials(self.root)
++        save_rows(path, rows[:-1])
++        with self.assertRaisesRegex(ValueError, "missing"):
++            suite.verify_trials(path, "P18", 1)
++        save_rows(path, rows + [rows[0]])
++        with self.assertRaisesRegex(ValueError, "duplicate"):
++            suite.verify_trials(path, "P18", 1)
++        rows[-1]["code_commit"] = "different"
++        save_rows(path, rows)
++        with self.assertRaisesRegex(ValueError, "mixed"):
++            suite.verify_trials(path, "P18", 1)
++
++    def test_rejects_false_success_and_replay_failure(self):
++        rows = write_trials(self.root)
++        rows[0].update(collisions_robot_moving=1, collisions_robot_stationary=0)
++        save_rows(self.root / "trials.csv", rows)
++        with self.assertRaisesRegex(ValueError, "success definition"):
++            suite.verify_trials(self.root / "trials.csv", "P18", 1)
++        write_trials(self.root)
++        (self.root / "replay.json").write_text('{"identical": false}')
++        with self.assertRaisesRegex(ValueError, "replay"):
++            suite.verify_trials(self.root / "trials.csv", "P18", 1)
++
++    def test_unverified_policy_rows_are_rejected(self):
++        rows = write_trials(self.root)
++        rows[0]["policies_at_tag"] = False
++        save_rows(self.root / "trials.csv", rows)
++        with self.assertRaisesRegex(ValueError, "provenance"):
++            suite.verify_trials(self.root / "trials.csv", "P18", 1)
++
++    def test_failed_preflight_does_not_launch_or_create_output(self):
++        out = self.root / "not_started"
++        self.preflight.stop()
++        with patch.object(suite, "policy_preflight", side_effect=ValueError("policy changed")):
++            with patch.object(suite.subprocess, "run") as run:
++                with self.assertRaisesRegex(ValueError, "policy changed"):
++                    suite.run_suite(self.selection, out, 1, 10)
++        run.assert_not_called()
++        self.assertFalse(out.exists())
++
++    def test_batch_only_analyzes_verified_outputs(self):
++        out = self.root / "run"
++        calls = []
++        def execute(command, **kwargs):
++            calls.append(command)
++            if "e3_one_scene.py" in command[1]:
++                write_trials(Path(command[command.index("--out") + 1]))
++            return SimpleNamespace(returncode=0)
++        with patch.object(suite.subprocess, "run", side_effect=execute):
++            self.assertEqual(suite.run_suite(self.selection, out, 1, 10), 0)
++        receipt = json.loads((out / "suite.json").read_text())
++        self.assertEqual(receipt["verified_trials"], 9)
++        self.assertEqual(receipt["status"], "complete")
++        self.assertEqual(len(calls), 2)
++        with self.assertRaisesRegex(ValueError, "empty"):
++            suite.run_suite(self.selection, out, 1, 10)
++
++    def test_failed_scene_is_recorded_and_analysis_is_not_run(self):
++        out = self.root / "failed"
++        with patch.object(suite.subprocess, "run", return_value=SimpleNamespace(returncode=2)) as run:
++            self.assertEqual(suite.run_suite(self.selection, out, 1, 10), 1)
++        receipt = json.loads((out / "suite.json").read_text())
++        self.assertEqual(run.call_count, 1)
++        self.assertEqual(receipt["planned_trials"], 9)
++        self.assertEqual(receipt["analysis"], "not_run")
++        self.assertEqual(receipt["scenes"][0]["status"], "failed")
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/docs/E3_ISAAC.md b/docs/E3_ISAAC.md
+new file mode 100644
+index 0000000..4f12f00
+--- /dev/null
++++ b/docs/E3_ISAAC.md
+@@ -0,0 +1,100 @@
++# E3 in Isaac Sim: closed-loop PhysX extension
++
++This backend runs the seeded E3 scenarios using the real robot articulation and measured physics feedback. It is a
++separate experiment from the ideal-unicycle 2D benchmark. Do not combine the two result sets or call robot-trajectory
++playback a physical navigation experiment.
++
++## Experiment grid
++
++Use a frozen selection manifest in the format written by `e3_select_scenes.py`. Ten selected layouts, three tiers,
++ten paired seeds, and three policies define 900 planned trials. Base variants remove authored agents; hard variants
++add 2–4 shelves and retain the E3 static and aisle checks. Invalid variants are recorded rather than replaced after
++navigation outcomes. `prepare` must complete the entire selection before native trials can start.
++
++```powershell
++uv run --extra mesh python scripts/e3_isaac_suite.py prepare results/e3_scene_selection/selection.json --seeds 10 --out out/e3_isaac_v1
++uv run --extra mesh python scripts/e3_isaac_suite.py run out/e3_isaac_v1 --isaac-python C:/isaacsim/python.exe
++```
++
++On a Linux standalone installation, pass its `python.sh`. A pip installation must use that installation's Python
++executable. Host planning dependencies and standalone `usd-core` must never be added to Kit's Python environment.
++
++The default minimum Isaac version is 5.0, matching worldc's original runtime gate. An existing Isaac 4.5 installation
++can be explicitly selected with `--allow-isaac-4.5`; its engine version is recorded and its results must remain separate.
++This does not change the E1 runtime gate or prove that 5.1 scene assets load correctly in 4.5. A real articulation,
++successful wheel calibration, valid measured state, and contact delivery are required for every trial. There is no
++proxy-body, kinematic-robot, missing-asset, or 2D fallback in the physical worker.
++
++## Controller and physics
++
++- The host runs a feedback port of `e3-policies-v1` at 20 Hz. The original frozen simulator and robot table remain
++  unchanged. Ideal-plant parity tests compare the feedback port with the frozen reference, including turning,
++  protective fields, human-aware replanning, rear approaches, and freezing.
++- Kit steps physics at 120 Hz. Only wheel velocity targets move the robot during a trial. Its position and velocity
++  come from the articulation, not numerical integration in the host.
++- Wheel gains and travel heading are calibrated in physics. The articulation's full state is reset before episode
++  time zero. Human tracks do not advance during calibration.
++- Scripted humans use kinematic capsules with radius 0.26 m and height 1.775 m. The same seeded tracks are shared
++  across policies and interpolated onto physics steps. They do not react to the robot or each other.
++- Observations are perfect simulator state. This evaluates control and physical interaction, not perception accuracy.
++- Tilt above 20 degrees or falling below the floor ends the trial as `physics_failure`. This is an additional physical
++  failure category absent from the ideal 2D backend. Contact-recorder errors are measurement failures and stop the run.
++
++## Metrics
++
++The original E3 footprint-to-human-disk metrics are computed from measured state at the same 20 Hz control clock.
++Turning counts as moving. These retain the 2D experiment's geometric definitions for comparison, but are labeled
++`E3 geometric` in the physical result table.
++
++Separately, the native callback records PhysX contact episodes. A report is confirmed only when a contact impulse
++exceeds 1e-5 N.s. Sustained contacts are counted once until separation, and self-contacts and floor contacts are
++excluded. Native episodes are per collider pair, not unique human hazard incidents. They include human and static
++obstacle contacts and must not be equated numerically with the per-human geometric episode count.
++
++`physx_success` means all goals reached with no contact episode beginning while the robot moves. `physx_contact_free_success`
++requires completion with no confirmed contact episodes of either motion class. The original `success` remains E3's
++geometric moving-contact definition. Both kinds of success are reported. Robot motion classification is not causal
++responsibility. No result constitutes standards compliance or real-world safety certification.
++
++## Required gates and evidence
++
++Before navigation, an isolated native diagnostic must show floor-only control, two force-bearing wall-contact
++episodes, sustained-contact deduplication, and separation after retreat. A failed diagnostic blocks the campaign.
++It is not counted as a benchmark trial. Every trial also requires floor callback delivery and zero callback errors.
++
++The campaign records scene/track/code hashes, policy and engine versions, native logs, measured trajectories,
++120 Hz robot traces, contact events, and outcomes. A broken bridge or infrastructure failure stops further native
++attempts; it is not converted into a collision-free result.
++
++After complete trials, hard/seed-0/blind is independently rerun for every selected scene. Physical replay tolerances are fixed before outcomes:
++maximum XY error 0.01 m, heading error 0.02 rad, duration error 0.1 s, and matching outcome, goal count, geometric moving
++contacts, and native episode count. This is a physical repeatability check, not the 2D bit-identical replay test.
++Analysis runs only after the replay passes. `e3_isaac_analysis.py` adds native contact and physical-failure columns to
++the existing paired-bootstrap analysis, and rejects mixed 2D/Isaac or mixed-engine input.
++
++## Checkpoints and geometry configuration
++
++`prepare --transform-seed N` fixes the geometry draw separately from the ten trial seeds. The default remains 0.
++The selected seed and every shelf pose are recorded; all policies and trial seeds use the same hard geometry.
++Any nondefault seed must be reported when comparing against the default 2D experiment. It does not change the
++allowed 2–4 shelves, 1.2 m aisle, static checks, worker counts, or frozen controller definitions.
++
++Every completed trial checkpoints its result and evidence hashes and updates `trials.csv`. After interruption,
++`run ... --resume` verifies unchanged code, prepared scenes and tracks, engine version, results, and native evidence before reusing
++completed trials. Incomplete attempts remain in place; restarted attempts use new directories. Infrastructure failures
++stop the batch and require diagnosis; resume does not silently replace failed measurements. An OS file lock prevents
++two Isaac campaigns from this project running together. The manifest becomes `complete` only after all physical
++trials, one replay per scene, and analysis pass.
++
++The native runner holds layout bodies fixed, disables inherited visual physics, and enables contact reporting on
++every robot link after removing stage instancing. Each trial writes `native_setup.json` confirming that inherited
++visual colliders are disabled. Workers receive initial transforms before the first measured step;
++later motion uses kinematic targets. PhysX advances at an explicit 1/120 s and its callback clock is checked each step.
++Contact patches for the same collider pair are merged within a callback to avoid treating a lost patch plus a
++persisting patch as a new episode. Raw episodes are not unique human incidents.
++
++## Validation scope
++
++Host parity and orchestration tests do not establish native wheel dynamics, asset compatibility, or callback delivery.
++Those require the actual native probe and a completed physical pilot before a full 900-trial campaign. The local
++Isaac 4.5 contact probe is an instrumentation diagnostic only; failed attempts remain separate from successful ones.

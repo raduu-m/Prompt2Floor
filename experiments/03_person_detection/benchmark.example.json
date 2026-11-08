@@ -1,0 +1,47 @@
+{
+  "id": {
+    "images": "data/id/images",
+    "annotations": "data/id/annotations.json"
+  },
+  "ood": {
+    "images": "data/ood/images",
+    "annotations": "data/ood/annotations.json"
+  },
+  "real": {
+    "format": "voc",
+    "images": "data/Sheffield/changing illumination"
+  },
+  "image_budget": 1800,
+  "expected_real_images": 13949,
+  "epochs": 3,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "image_size": 640,
+  "batch_size": 8,
+  "device": "0",
+  "models": [
+    {
+      "name": "YOLO26s",
+      "backend": "yolo",
+      "checkpoint": "yolo26s.pt"
+    },
+    {
+      "name": "YOLO26l",
+      "backend": "yolo",
+      "checkpoint": "yolo26l.pt"
+    },
+    {
+      "name": "RT-DETRv2-S",
+      "backend": "rtdetr",
+      "checkpoint": "PekingU/rtdetr_v2_r18vd"
+    },
+    {
+      "name": "RT-DETRv2-L",
+      "backend": "rtdetr",
+      "checkpoint": "PekingU/rtdetr_v2_r50vd"
+    }
+  ]
+}

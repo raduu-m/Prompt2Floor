@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "from-prompt-to-floor-experiments"
+version = "0.1.0"
+description = "Experiment contributions built on the external worldc simulation framework"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.urls]
+"Simulation framework" = "https://github.com/SheepSeb/worldc"
+
+[tool.setuptools]
+packages = []

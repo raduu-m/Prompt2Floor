@@ -1,0 +1,6 @@
+{
+  "standalone_tests": 10,
+  "generation_dry_run": "passed",
+  "navigation_patch_check": "passed",
+  "full_benchmark_run": false
+}
