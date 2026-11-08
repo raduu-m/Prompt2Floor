@@ -6,6 +6,7 @@
   <meta name="description" content="From Prompt to Floor: verified LLM-generated workcells for human-robot remanufacturing. Explore results on scene generation, navigation, motion realism, and sim-to-real detection.">
   <title>From Prompt to Floor</title>
   <link rel="stylesheet" href="style.css">
+  <script src="site.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -30,8 +31,8 @@
       <article>
         <section id="overview">
           <figure class="video-example overview-video">
-            <video controls playsinline preload="metadata" poster="assets/paper-overview.jpg" aria-label="From Prompt to Floor paper overview video">
-              <source src="assets/paper-overview.mp4" type="video/mp4">
+            <video controls playsinline preload="auto" poster="assets/paper-overview.jpg" aria-label="From Prompt to Floor paper overview video" autoplay loop muted>
+              <source src="assets/paper-overview.mp4?v=2" type="video/mp4">
               <a href="assets/paper-overview.mp4">Download the paper overview video</a>
             </video>
           </figure>
@@ -48,21 +49,21 @@
           <p class="label">Video examples</p>
           <div class="video-grid">
             <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p01-deepseek.jpg" aria-label="Demonstration in the P01 EV battery dismantling scene" aria-describedby="p01-video-caption">
+              <video controls playsinline preload="auto" poster="assets/demo-p01-deepseek.jpg" aria-label="Demonstration in the P01 EV battery dismantling scene" aria-describedby="p01-video-caption" autoplay loop muted>
                 <source src="assets/demo-p01-deepseek.mp4" type="video/mp4">
                 <a href="assets/demo-p01-deepseek.mp4">Download the battery dismantling demonstration</a>
               </video>
               <figcaption id="p01-video-caption"><strong>Electric vehicle battery dismantling</strong><span>DeepSeek V4.1 Flash · P01<br>8 × 6 m · one worker</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/deepseek-v4.1-flash_cloud/runs/20261029T134119_7e18efd9">Source dataset run ↗</a></figcaption>
             </figure>
             <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p15-sonnet.jpg" aria-label="Demonstration in the P15 gearbox remanufacturing scene" aria-describedby="p15-video-caption">
+              <video controls playsinline preload="auto" poster="assets/demo-p15-sonnet.jpg" aria-label="Demonstration in the P15 gearbox remanufacturing scene" aria-describedby="p15-video-caption" autoplay loop muted>
                 <source src="assets/demo-p15-sonnet.mp4" type="video/mp4">
                 <a href="assets/demo-p15-sonnet.mp4">Download the gearbox remanufacturing demonstration</a>
               </video>
               <figcaption id="p15-video-caption"><strong>Gearbox remanufacturing</strong><span>Claude Sonnet 5.5 · P15<br>26 × 14 m · six workers</span><a href="https://huggingface.co/datasets/RaduMoldoveanu/From-Prompt-to-Floor-Dataset/tree/main/claude-sonnet-5-5/runs/20261030T095745_91fdb0bb">Source dataset run ↗</a></figcaption>
             </figure>
             <figure class="video-example">
-              <video controls playsinline preload="metadata" poster="assets/demo-p23-glm.jpg" aria-label="Demonstration in the P23 sorting and grading scene" aria-describedby="p23-video-caption">
+              <video controls playsinline preload="auto" poster="assets/demo-p23-glm.jpg" aria-label="Demonstration in the P23 sorting and grading scene" aria-describedby="p23-video-caption" autoplay loop muted>
                 <source src="assets/demo-p23-glm.mp4" type="video/mp4">
                 <a href="assets/demo-p23-glm.mp4">Download the sorting and grading demonstration</a>
               </video>
@@ -178,6 +179,29 @@
             </table>
           </div>
           <p class="note">Fine-tuning scores are reported as the mean ± standard deviation across three seeds, with the highest observed mean in each row shown in bold. ID training improved RT-DETRv2-S by 23.16 percentage points relative to its pretrained baseline. This gain may reflect adaptation to Sheffield. Evaluation on a single real benchmark, short fine-tuning, and the absence of a real-data fine-tuning reference limit broader conclusions about transfer.</p>
+          <div class="comparison" data-comparison>
+            <h3>Visual comparison</h3>
+            <p>RT-DETRv2-S predictions on three held-out synthetic frames. ID uses the same layout, OOD uses other layouts, and Mixed combines both.</p>
+            <div class="comparison-examples" role="group" aria-label="Choose a comparison example">
+              <button type="button" data-example="example-1" data-left="pretrained" data-right="id" data-split="50" aria-pressed="true"><img src="assets/comparison/example-1/pretrained.jpg" alt="" width="960" height="540" loading="lazy"><span>1 · Overhead view</span></button>
+              <button type="button" data-example="example-2" data-left="pretrained" data-right="mixed" data-split="50" aria-pressed="false"><img src="assets/comparison/example-2/pretrained.jpg" alt="" width="960" height="540" loading="lazy"><span>2 · Warehouse aisle</span></button>
+              <button type="button" data-example="example-3" data-left="ood" data-right="id" data-split="70" aria-pressed="false"><img src="assets/comparison/example-3/pretrained.jpg" alt="" width="960" height="540" loading="lazy"><span>3 · Workcell view</span></button>
+            </div>
+            <div class="comparison-controls">
+              <label>Left view <select data-side="left" aria-label="Left detector condition"><option value="pretrained">Pretrained</option><option value="id">ID</option><option value="ood">OOD</option><option value="mixed">Mixed (ID + OOD)</option></select></label>
+              <label>Right view <select data-side="right" aria-label="Right detector condition"><option value="pretrained">Pretrained</option><option value="id" selected>ID</option><option value="ood">OOD</option><option value="mixed">Mixed (ID + OOD)</option></select></label>
+            </div>
+            <div class="comparison-view">
+              <img data-image="right" src="assets/comparison/example-1/id.jpg" alt="ID person detections" width="960" height="540" loading="lazy">
+              <div class="comparison-left"><img data-image="left" src="assets/comparison/example-1/pretrained.jpg" alt="Pretrained person detections" width="960" height="540" loading="lazy"></div>
+              <div class="comparison-divider" aria-hidden="true"><span>↔</span></div>
+              <span class="comparison-label left" data-label="left">Pretrained</span>
+              <span class="comparison-label right" data-label="right">ID</span>
+              <input class="comparison-range" type="range" min="0" max="100" value="50" aria-label="Comparison divider; use arrow keys to move">
+            </div>
+            <p class="comparison-hint">Drag to compare. Choose any two conditions above.</p>
+          </div>
+
         </section>
         <section id="resources">
           <p class="label">Resources</p>

@@ -1,0 +1,73 @@
+{
+  "model": "PekingU/rtdetr_v2_r18vd",
+  "new_qualitative_experiment": true,
+  "seed": 20261108,
+  "epochs": 3,
+  "images_per_condition": 1200,
+  "mixed_images_per_source": 600,
+  "input_resolution": [
+    640,
+    640
+  ],
+  "confidence_threshold": 0.5,
+  "iou_for_selection": 0.5,
+  "frame": {
+    "camera": "dataset_ceiling_south",
+    "time_s": 29.2,
+    "filename": "0292_dataset_ceiling_south.png",
+    "source_sha256": "88d942ab285750e1f593b876202bcf6d91abb0ec6b41b5d8e90843b7d64b5d2c"
+  },
+  "selection": "Illustrative frame selected from held-out timestamps for visible qualitative differences; not a representative or aggregate performance claim.",
+  "definitions": {
+    "id": "Warehouse frames from first 20 seconds",
+    "ood": "Frames from other retained layouts",
+    "mixed": "600 from each training source",
+    "evaluation": "Warehouse frames at or after 22 seconds; excluded from training"
+  },
+  "predictions": {
+    "pretrained": {
+      "boxes": [],
+      "scores": []
+    },
+    "id": {
+      "boxes": [
+        [
+          352.55206298828125,
+          162.61962890625,
+          552.5320434570312,
+          353.4638366699219
+        ]
+      ],
+      "scores": [
+        0.96728515625
+      ]
+    },
+    "ood": {
+      "boxes": [],
+      "scores": []
+    },
+    "mixed": {
+      "boxes": [
+        [
+          353.9114990234375,
+          161.83987426757812,
+          553.5473022460938,
+          352.39947509765625
+        ]
+      ],
+      "scores": [
+        0.95703125
+      ]
+    }
+  },
+  "base_checkpoint_sha256": "d18309d0d7ea57048138885c4c6ecfcb1e24506fc6153b94ad484f8ab62c7115",
+  "model_revision": "5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "learning_rate": 0.0001,
+  "trainable": "Encoder, decoder, projection layers and prediction heads; frozen backbone",
+  "label_filter": "visible pixels >=25, width >=4, height >=8; visible actor-mask envelopes",
+  "fine_tuned_checkpoint_sha256": {
+    "id": "646c774fbdaad857e966561a739521e6fcf703cb7f3eceaa1871414664146c2f",
+    "ood": "25753da34cdef94480cdae6c5c814285f57b00e01d6273211d81f7b708971e10",
+    "mixed": "38d0735e8fb6c20c59d1a96c19b466017025924ecfd7d616adc31dcee805efef"
+  }
+}

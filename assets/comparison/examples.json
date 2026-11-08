@@ -1,0 +1,209 @@
+{
+  "model": "PekingU/rtdetr_v2_r18vd",
+  "new_qualitative_experiment": true,
+  "seed": 20261108,
+  "epochs": 3,
+  "images_per_condition": 1200,
+  "mixed_images_per_source": 600,
+  "input_resolution": [
+    640,
+    640
+  ],
+  "confidence_threshold": 0.5,
+  "iou_for_selection": 0.5,
+  "selection": "Illustrative frame selected from held-out timestamps for visible qualitative differences; not a representative or aggregate performance claim.",
+  "definitions": {
+    "id": "Warehouse frames from first 20 seconds",
+    "ood": "Frames from other retained layouts",
+    "mixed": "600 from each training source",
+    "evaluation": "Warehouse frames at or after 22 seconds; excluded from training"
+  },
+  "base_checkpoint_sha256": "d18309d0d7ea57048138885c4c6ecfcb1e24506fc6153b94ad484f8ab62c7115",
+  "model_revision": "5650961749fa93567c0d46fc7f43ea4f9e914107",
+  "learning_rate": 0.0001,
+  "trainable": "Encoder, decoder, projection layers and prediction heads; frozen backbone",
+  "label_filter": "visible pixels >=25, width >=4, height >=8; visible actor-mask envelopes",
+  "fine_tuned_checkpoint_sha256": {
+    "id": "646c774fbdaad857e966561a739521e6fcf703cb7f3eceaa1871414664146c2f",
+    "ood": "25753da34cdef94480cdae6c5c814285f57b00e01d6273211d81f7b708971e10",
+    "mixed": "38d0735e8fb6c20c59d1a96c19b466017025924ecfd7d616adc31dcee805efef"
+  },
+  "examples": [
+    {
+      "id": "example-1",
+      "title": "Overhead view",
+      "left": "pretrained",
+      "right": "id",
+      "frame": {
+        "camera": "dataset_ceiling_south",
+        "time_s": 29.2,
+        "filename": "0292_dataset_ceiling_south.png",
+        "sha256": "88d942ab285750e1f593b876202bcf6d91abb0ec6b41b5d8e90843b7d64b5d2c"
+      },
+      "predictions": {
+        "pretrained": {
+          "boxes": [],
+          "scores": []
+        },
+        "id": {
+          "boxes": [
+            [
+              352.55206298828125,
+              162.61962890625,
+              552.5320434570312,
+              353.4638366699219
+            ]
+          ],
+          "scores": [
+            0.96728515625
+          ]
+        },
+        "ood": {
+          "boxes": [],
+          "scores": []
+        },
+        "mixed": {
+          "boxes": [
+            [
+              353.9114990234375,
+              161.83987426757812,
+              553.5473022460938,
+              352.39947509765625
+            ]
+          ],
+          "scores": [
+            0.95703125
+          ]
+        }
+      }
+    },
+    {
+      "id": "example-2",
+      "title": "Warehouse aisle",
+      "left": "pretrained",
+      "right": "mixed",
+      "frame": {
+        "camera": "warehouse_east",
+        "time_s": 28.8,
+        "filename": "0288_warehouse_east.png",
+        "sha256": "708df459eabd508a16b03b1269cf9ea59157d2f0d7029d3f34811ba6d17a3d44"
+      },
+      "predictions": {
+        "pretrained": {
+          "boxes": [],
+          "scores": []
+        },
+        "id": {
+          "boxes": [
+            [
+              475.0193786621094,
+              324.58551025390625,
+              502.4584045410156,
+              384.61566162109375
+            ]
+          ],
+          "scores": [
+            0.93212890625
+          ]
+        },
+        "ood": {
+          "boxes": [
+            [
+              474.52593994140625,
+              324.4452209472656,
+              502.5679931640625,
+              384.5976257324219
+            ]
+          ],
+          "scores": [
+            0.83447265625
+          ]
+        },
+        "mixed": {
+          "boxes": [
+            [
+              474.55810546875,
+              324.3254089355469,
+              501.81048583984375,
+              384.6099853515625
+            ]
+          ],
+          "scores": [
+            0.91650390625
+          ]
+        }
+      }
+    },
+    {
+      "id": "example-3",
+      "title": "Workcell view",
+      "left": "ood",
+      "right": "id",
+      "frame": {
+        "camera": "workcell_front",
+        "time_s": 23.6,
+        "filename": "0236_workcell_front.png",
+        "sha256": "9cab35b0f7bcbd5e4e4f189013534c6506c912690818c1fb2b1ff9ca2cafd6ae"
+      },
+      "predictions": {
+        "pretrained": {
+          "boxes": [],
+          "scores": []
+        },
+        "id": {
+          "boxes": [
+            [
+              797.228515625,
+              47.667781829833984,
+              829.9051513671875,
+              119.87938690185547
+            ],
+            [
+              466.53875732421875,
+              37.86792755126953,
+              479.9858703613281,
+              73.86222076416016
+            ]
+          ],
+          "scores": [
+            0.96240234375,
+            0.67626953125
+          ]
+        },
+        "ood": {
+          "boxes": [
+            [
+              796.6802368164062,
+              48.519989013671875,
+              829.8665771484375,
+              118.44776916503906
+            ]
+          ],
+          "scores": [
+            0.77685546875
+          ]
+        },
+        "mixed": {
+          "boxes": [
+            [
+              797.5950317382812,
+              47.69012451171875,
+              830.6536865234375,
+              119.94823455810547
+            ],
+            [
+              468.5888977050781,
+              38.27975082397461,
+              480.1635437011719,
+              74.62812805175781
+            ]
+          ],
+          "scores": [
+            0.927734375,
+            0.6630859375
+          ]
+        }
+      }
+    }
+  ]
+}
